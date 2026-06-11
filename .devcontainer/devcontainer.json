@@ -1,0 +1,6 @@
+{
+  "name": "research-planner",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "frontend",
+  "workspaceFolder": "/app"
+}
