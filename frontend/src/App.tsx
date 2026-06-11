@@ -22,13 +22,14 @@ import {
 
 type ViewMode = 'calendar' | 'gantt';
 type FilterValue = TaskStatus | 'all';
+type ModalMode = 'createTask' | 'taskDetail' | 'projects' | null;
 
 const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'None', value: 'none'},
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.6';
+const APP_VERSION = 'v1.3.7';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -72,6 +73,11 @@ function getInitialWeekStart() {
   }
 
   return startOfWeek(new Date());
+}
+
+function getInitialDayIndex() {
+  const index = dayIndexFromDate(new Date(), getInitialWeekStart());
+  return index >= 0 && index <= 6 ? index : 0;
 }
 
 function dateInputValue(date: Date) {
@@ -175,6 +181,8 @@ export default function App() {
   const [tagFilter, setTagFilter] = useState('all');
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [weekStart, setWeekStartState] = useState(getInitialWeekStart);
+  const [selectedDayIndex, setSelectedDayIndex] = useState(getInitialDayIndex);
+  const [modalMode, setModalMode] = useState<ModalMode>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -233,6 +241,14 @@ export default function App() {
   }, [events, tasks, weekKey]);
   const selectedEvent = scheduledEvents.find((event) => event.id === selectedEventId) ?? null;
   const selectedEventTask = selectedEvent ? tasks.find((task) => task.id === selectedEvent.taskId) ?? null : null;
+  const selectedDayTaskIds = useMemo(
+    () => new Set(scheduledEvents.filter((event) => event.day === selectedDayIndex).map((event) => event.taskId)),
+    [scheduledEvents, selectedDayIndex],
+  );
+  const selectedDayTasks = useMemo(
+    () => filteredTasks.filter((task) => selectedDayTaskIds.has(task.id)),
+    [filteredTasks, selectedDayTaskIds],
+  );
   const conflictGroups = useMemo(() => {
     const conflicts: {day: number; first: CalendarEvent; second: CalendarEvent}[] = [];
 
@@ -297,6 +313,7 @@ export default function App() {
     if (!task || day < 0 || day > 6) return;
 
     const startMinute = snapToQuarterHour(minute);
+    setSelectedDayIndex(day);
     if (task.recurrence !== 'none') {
       updateTask({
         ...task,
@@ -327,6 +344,7 @@ export default function App() {
     if (!task.title) return;
     addTask(task);
     setSelectedTaskId(task.id);
+    setModalMode(null);
     event.currentTarget.reset();
   }
 
@@ -336,6 +354,7 @@ export default function App() {
     if (!project.name) return;
     addProject(project);
     setSelectedProjectId(project.id);
+    setModalMode(null);
     event.currentTarget.reset();
   }
 
@@ -345,6 +364,7 @@ export default function App() {
 
     const day = dayIndexFromDate(start, weekStart);
     if (day < 0 || day > 6) return;
+    setSelectedDayIndex(day);
 
     const startMinute = snapToQuarterHour(minutesFromDate(start));
     const endMinute = end ? Math.max(startMinute + 15, snapToQuarterHour(minutesFromDate(end))) : current.endMinute;
@@ -444,10 +464,15 @@ export default function App() {
   return (
     <DndContext sensors={sensors} onDragEnd={handleTaskDragEnd} onDragStart={(event) => setActiveTaskId(String(event.active.id))}>
       <main className="planner-shell">
-        <aside className="sidebar">
+        <aside className="sidebar day-board">
           <section className="brand-panel">
             <p className="eyebrow">Research Planner {APP_VERSION}</p>
-            <h1>Week Blocking</h1>
+            <div className="board-title-row">
+              <h1>Week Blocking</h1>
+              <button aria-label="Create task" className="add-task-button" onClick={() => setModalMode('createTask')} type="button">
+                +
+              </button>
+            </div>
             <div className="view-switch" role="tablist" aria-label="View mode">
               <button className={viewMode === 'calendar' ? 'active' : ''} onClick={() => setViewMode('calendar')} type="button">
                 Calendar
@@ -456,130 +481,41 @@ export default function App() {
                 Gantt
               </button>
             </div>
-          </section>
-
-          <section className="task-create-panel" aria-label="Create task">
-            <h2>Create Task</h2>
-            <form onSubmit={handleCreateTask} className="stack-form">
-              <input name="title" placeholder="Task title" required />
-              <textarea name="description" placeholder="Description" rows={3} />
-              <div className="field-grid">
-                <label>
-                  Minutes
-                  <input name="duration" type="number" min="15" step="15" defaultValue="60" />
-                </label>
-                <label>
-                  Project
-                  <select name="projectId" defaultValue={projects[0]?.id}>
-                    {projects.map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <input name="tags" placeholder="Tags: paper, seminar" />
-              <div className="field-grid">
-                <label>
-                  Recurrence
-                  <select name="recurrence" defaultValue="none">
-                    {recurrenceOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Day
-                  <select name="recurrenceDay" defaultValue={NO_RECURRENCE_DAY}>
-                    <option value={NO_RECURRENCE_DAY}>None</option>
-                    {days.map((day, index) => (
-                      <option key={day} value={index}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <label>
-                Recurrence time
-                <select name="recurrenceStartMinute" defaultValue={9 * 60}>
-                  {Array.from({length: 24}, (_, hour) => (
-                    <option key={hour} value={hour * 60}>
-                      {formatTime(hour * 60)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="field-grid">
-                <label>
-                  Gantt start
-                  <select name="ganttStartDay" defaultValue={0}>
-                    {days.map((day, index) => (
-                      <option key={day} value={index}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Gantt end
-                  <select name="ganttEndDay" defaultValue={0}>
-                    {days.map((day, index) => (
-                      <option key={day} value={index}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <button type="submit">Add Task</button>
-            </form>
-          </section>
-
-          <section className="filters" aria-label="Search and filters">
-            <h2>Search and Filters</h2>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, description, tags" />
-            <div className="field-grid">
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as FilterValue)}>
-                <option value="all">All statuses</option>
-                {statuses.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-              <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
-                <option value="all">All projects</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
+            <div className="app-actions">
+              <button onClick={() => setModalMode('taskDetail')} disabled={!selectedTask} type="button">
+                Task Detail
+              </button>
+              <button onClick={() => setModalMode('projects')} type="button">
+                Projects
+              </button>
             </div>
-            <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
-              <option value="all">All tags</option>
-              {allTags.map((tag) => (
-                <option key={tag} value={tag}>
-                  {tag}
-                </option>
-              ))}
-            </select>
           </section>
 
-          <section className="kanban" aria-label="Tasks">
+          <section className="day-selector" aria-label="Selected day">
+            {days.map((day, index) => (
+              <button className={selectedDayIndex === index ? 'active' : ''} key={day} onClick={() => setSelectedDayIndex(index)} type="button">
+                {day}
+              </button>
+            ))}
+          </section>
+
+          <section className="kanban" aria-label={`${days[selectedDayIndex]} tasks`}>
+            <header className="day-board-header">
+              <div>
+                <p className="eyebrow">Dropped on</p>
+                <h2>{days[selectedDayIndex]}</h2>
+              </div>
+              <span>{selectedDayTasks.length} tasks</span>
+            </header>
             {statuses.map((status) => (
               <div className="kanban-column" key={status}>
                 <header>
                   <h2>{status}</h2>
-                  <span>{filteredTasks.filter((task) => task.status === status).length}</span>
+                  <span>{selectedDayTasks.filter((task) => task.status === status).length}</span>
                 </header>
 
                 <div className="task-list">
-                  {filteredTasks
+                  {selectedDayTasks
                     .filter((task) => task.status === status)
                     .map((task) => (
                       <DraggableTaskCard
@@ -590,6 +526,7 @@ export default function App() {
                         task={task}
                       />
                     ))}
+                  {!selectedDayTasks.some((task) => task.status === status) && <p className="empty-state">No tasks</p>}
                 </div>
               </div>
             ))}
@@ -634,25 +571,6 @@ export default function App() {
             </div>
           </header>
 
-          <section className="summary-grid" aria-label="Project summaries">
-            {summaries.map((summary) => (
-              <button
-                className={`summary-card ${selectedProjectId === summary.id ? 'selected' : ''}`}
-                key={summary.id}
-                onClick={() => setSelectedProjectId(summary.id)}
-                type="button"
-              >
-                <span className="summary-color" style={{backgroundColor: summary.color}} />
-                <strong>{summary.name}</strong>
-                <span>{summary.taskCount} tasks</span>
-                <b>{Math.round(summary.scheduledMinutes / 60)}h scheduled</b>
-                <small>
-                  {Math.round(summary.doneMinutes / 60)}h done / {Math.round(summary.plannedMinutes / 60)}h planned
-                </small>
-              </button>
-            ))}
-          </section>
-
           <section className="week-status" aria-label="Week and conflicts">
             <span>
               Week of <strong>{dateInputValue(weekStart)}</strong>
@@ -681,7 +599,9 @@ export default function App() {
               <FullCalendar
                 allDaySlot={false}
                 dateClick={(arg) => {
-                  if (selectedTask) scheduleTask(selectedTask.id, dayIndexFromDate(arg.date, weekStart), minutesFromDate(arg.date));
+                  const clickedDay = dayIndexFromDate(arg.date, weekStart);
+                  if (clickedDay >= 0 && clickedDay <= 6) setSelectedDayIndex(clickedDay);
+                  if (selectedTask) scheduleTask(selectedTask.id, clickedDay, minutesFromDate(arg.date));
                 }}
                 dayHeaderFormat={{weekday: 'short'}}
                 editable
@@ -692,6 +612,8 @@ export default function App() {
                 eventClick={(arg) => {
                   const taskId = String(arg.event.extendedProps.taskId ?? '');
                   if (taskId) setSelectedTaskId(taskId);
+                  const event = scheduledEvents.find((item) => item.id === arg.event.id);
+                  if (event) setSelectedDayIndex(event.day);
                   setSelectedEventId(arg.event.id);
                 }}
                 eventContent={(arg) => (
@@ -980,6 +902,304 @@ export default function App() {
           </section>
         </aside>
       </main>
+
+      {modalMode === 'createTask' && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setModalMode(null)}>
+          <section
+            aria-label="Create task"
+            aria-modal="true"
+            className="event-modal app-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <header className="modal-header">
+              <div>
+                <p className="eyebrow">Create Task</p>
+                <h2>Add task</h2>
+              </div>
+              <button aria-label="Close create task" className="icon-button" onClick={() => setModalMode(null)} type="button">
+                x
+              </button>
+            </header>
+
+            <form onSubmit={handleCreateTask} className="stack-form modal-form">
+              <input name="title" placeholder="Task title" required />
+              <textarea name="description" placeholder="Description" rows={3} />
+              <div className="field-grid">
+                <label>
+                  Minutes
+                  <input name="duration" type="number" min="15" step="15" defaultValue="60" />
+                </label>
+                <label>
+                  Project
+                  <select name="projectId" defaultValue={projects[0]?.id}>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <input name="tags" placeholder="Tags: paper, seminar" />
+              <div className="field-grid">
+                <label>
+                  Recurrence
+                  <select name="recurrence" defaultValue="none">
+                    {recurrenceOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Day
+                  <select name="recurrenceDay" defaultValue={NO_RECURRENCE_DAY}>
+                    <option value={NO_RECURRENCE_DAY}>None</option>
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label>
+                Recurrence time
+                <select name="recurrenceStartMinute" defaultValue={9 * 60}>
+                  {Array.from({length: 24}, (_, hour) => (
+                    <option key={hour} value={hour * 60}>
+                      {formatTime(hour * 60)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="field-grid">
+                <label>
+                  Gantt start
+                  <select name="ganttStartDay" defaultValue={0}>
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Gantt end
+                  <select name="ganttEndDay" defaultValue={0}>
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <footer className="modal-actions">
+                <button className="secondary" onClick={() => setModalMode(null)} type="button">
+                  Cancel
+                </button>
+                <button type="submit">Add Task</button>
+              </footer>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {modalMode === 'taskDetail' && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setModalMode(null)}>
+          <section
+            aria-label="Task details"
+            aria-modal="true"
+            className="event-modal app-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <header className="modal-header">
+              <div>
+                <p className="eyebrow">Task Detail</p>
+                <h2>{selectedTask?.title ?? 'No task selected'}</h2>
+              </div>
+              <button aria-label="Close task details" className="icon-button" onClick={() => setModalMode(null)} type="button">
+                x
+              </button>
+            </header>
+
+            {selectedTask ? (
+              <section className="detail-section modal-section">
+                <label>
+                  Title
+                  <input value={selectedTask.title} onChange={(event) => updateTask({...selectedTask, title: event.target.value})} />
+                </label>
+                <label>
+                  Description
+                  <textarea
+                    rows={4}
+                    value={selectedTask.description}
+                    onChange={(event) => updateTask({...selectedTask, description: event.target.value})}
+                  />
+                </label>
+                <div className="field-grid">
+                  <label>
+                    Minutes
+                    <input
+                      type="number"
+                      min="15"
+                      step="15"
+                      value={selectedTask.duration}
+                      onChange={(event) => updateTask({...selectedTask, duration: Number(event.target.value)})}
+                    />
+                  </label>
+                  <label>
+                    Status
+                    <select value={selectedTask.status} onChange={(event) => updateTask({...selectedTask, status: event.target.value as TaskStatus})}>
+                      {statuses.map((status) => (
+                        <option key={status}>{status}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  Project
+                  <select value={selectedTask.projectId} onChange={(event) => updateTask({...selectedTask, projectId: event.target.value})}>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Recurrence
+                  <select value={selectedTask.recurrence} onChange={(event) => updateTask({...selectedTask, recurrence: event.target.value as Recurrence})}>
+                    {recurrenceOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <footer className="modal-actions">
+                  <button
+                    className="danger"
+                    type="button"
+                    onClick={() => {
+                      deleteTask(selectedTask.id);
+                      setSelectedEventId('');
+                      setModalMode(null);
+                    }}
+                  >
+                    Delete
+                  </button>
+                  <button onClick={() => setModalMode(null)} type="button">
+                    Done
+                  </button>
+                </footer>
+              </section>
+            ) : (
+              <p className="empty-state">Select a task first.</p>
+            )}
+          </section>
+        </div>
+      )}
+
+      {modalMode === 'projects' && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setModalMode(null)}>
+          <section
+            aria-label="Projects"
+            aria-modal="true"
+            className="event-modal app-modal wide"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <header className="modal-header">
+              <div>
+                <p className="eyebrow">Projects</p>
+                <h2>Manage</h2>
+              </div>
+              <button aria-label="Close projects" className="icon-button" onClick={() => setModalMode(null)} type="button">
+                x
+              </button>
+            </header>
+
+            <section className="summary-grid modal-summary" aria-label="Project summaries">
+              {summaries.map((summary) => (
+                <button
+                  className={`summary-card ${selectedProjectId === summary.id ? 'selected' : ''}`}
+                  key={summary.id}
+                  onClick={() => setSelectedProjectId(summary.id)}
+                  type="button"
+                >
+                  <span className="summary-color" style={{backgroundColor: summary.color}} />
+                  <strong>{summary.name}</strong>
+                  <span>{summary.taskCount} tasks</span>
+                  <b>{Math.round(summary.scheduledMinutes / 60)}h scheduled</b>
+                  <small>
+                    {Math.round(summary.doneMinutes / 60)}h done / {Math.round(summary.plannedMinutes / 60)}h planned
+                  </small>
+                </button>
+              ))}
+            </section>
+
+            <section className="project-editor modal-section" aria-label="Project management">
+              <form onSubmit={handleCreateProject} className="stack-form">
+                <input name="name" placeholder="New project name" />
+                <input name="goal" placeholder="Goal or note" />
+                <select name="color" defaultValue={projectColors[0]}>
+                  {projectColors.map((color) => (
+                    <option key={color} value={color}>
+                      {color}
+                    </option>
+                  ))}
+                </select>
+                <button type="submit">Add Project</button>
+              </form>
+
+              {selectedProject && (
+                <div className="selected-project">
+                  <label>
+                    Name
+                    <input value={selectedProject.name} onChange={(event) => updateProject({...selectedProject, name: event.target.value})} />
+                  </label>
+                  <label>
+                    Goal
+                    <textarea
+                      rows={3}
+                      value={selectedProject.goal}
+                      onChange={(event) => updateProject({...selectedProject, goal: event.target.value})}
+                    />
+                  </label>
+                  <label>
+                    Color
+                    <select value={selectedProject.color} onChange={(event) => updateProject({...selectedProject, color: event.target.value})}>
+                      {projectColors.map((color) => (
+                        <option key={color} value={color}>
+                          {color}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="danger"
+                    disabled={projects.length <= 1}
+                    type="button"
+                    onClick={() => {
+                      const fallbackProject = projects.find((project) => project.id !== selectedProject.id);
+                      deleteProject(selectedProject.id);
+                      setSelectedProjectId(fallbackProject?.id ?? '');
+                      if (projectFilter === selectedProject.id) setProjectFilter('all');
+                    }}
+                  >
+                    Delete Project
+                  </button>
+                </div>
+              )}
+            </section>
+          </section>
+        </div>
+      )}
 
       {selectedEvent && selectedEventTask && (
         <div className="modal-backdrop" role="presentation" onMouseDown={closeEventPopup}>

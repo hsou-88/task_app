@@ -33,9 +33,10 @@ button {
 
 .planner-shell {
   display: grid;
-  grid-template-columns: 360px minmax(780px, 1fr) 320px;
+  grid-template-columns: 360px minmax(780px, 1fr);
   height: 100vh;
-  overflow: hidden;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .sidebar,
@@ -52,7 +53,7 @@ button {
 
 .detail-panel {
   border-left: 1px solid #d9e1ea;
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 18px;
 }
@@ -117,8 +118,59 @@ h2 {
   box-shadow: 0 1px 3px rgba(24, 40, 62, 0.12);
 }
 
+.board-title-row,
+.app-actions,
+.day-board-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.add-task-button {
+  border-radius: 999px;
+  flex: 0 0 42px;
+  font-size: 24px;
+  line-height: 1;
+  min-height: 42px;
+  padding: 0;
+  width: 42px;
+}
+
+.app-actions {
+  align-items: stretch;
+}
+
+.app-actions button {
+  flex: 1 1 0;
+}
+
+.day-selector {
+  border-bottom: 1px solid #e5ebf2;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  padding: 14px 0 16px;
+}
+
+.day-selector button {
+  background: #f7fbff;
+  border-color: #d8e2ee;
+  color: #405066;
+  font-size: 12px;
+  min-height: 36px;
+  padding: 6px 4px;
+}
+
+.day-selector button.active {
+  background: #1d4f91;
+  border-color: #1d4f91;
+  color: #ffffff;
+}
+
 .stack-form,
 .detail-panel label,
+.modal-section label,
 .selected-project {
   display: flex;
   flex-direction: column;
@@ -177,6 +229,22 @@ button:disabled {
   flex-direction: column;
   gap: 16px;
   padding-top: 18px;
+}
+
+.day-board-header {
+  background: #f7fbff;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.day-board-header span {
+  background: #e8eef6;
+  border-radius: 999px;
+  color: #405066;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 10px;
 }
 
 .kanban-column {
@@ -254,6 +322,18 @@ button:disabled {
   color: #5c6a7a;
   font-size: 12px;
   font-weight: 700;
+}
+
+.empty-state {
+  background: #f7fbff;
+  border: 1px dashed #cfd9e5;
+  border-radius: 8px;
+  color: #657386;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+  padding: 12px;
+  text-align: center;
 }
 
 .tag-row {
@@ -661,6 +741,26 @@ button:disabled {
   border-color: #d28c8c;
 }
 
+.app-modal {
+  max-width: 620px;
+  width: min(100%, 620px);
+}
+
+.app-modal.wide {
+  max-width: 880px;
+  width: min(100%, 880px);
+}
+
+.modal-form,
+.modal-section {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.modal-summary {
+  margin-bottom: 0;
+}
+
 .modal-header,
 .modal-actions,
 .event-time-row {
@@ -715,6 +815,15 @@ button:disabled {
 .danger {
   border-color: #c14242;
   color: #ad2f2f;
+}
+
+.secondary {
+  background: #ffffff;
+  color: #1d4f91;
+}
+
+.secondary:hover {
+  background: #eef5ff;
 }
 
 .danger:hover {
