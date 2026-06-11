@@ -28,7 +28,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.5';
+const APP_VERSION = 'v1.3.6';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -232,6 +232,7 @@ export default function App() {
     return [...manualEvents, ...recurringEvents];
   }, [events, tasks, weekKey]);
   const selectedEvent = scheduledEvents.find((event) => event.id === selectedEventId) ?? null;
+  const selectedEventTask = selectedEvent ? tasks.find((task) => task.id === selectedEvent.taskId) ?? null : null;
   const conflictGroups = useMemo(() => {
     const conflicts: {day: number; first: CalendarEvent; second: CalendarEvent}[] = [];
 
@@ -420,6 +421,22 @@ export default function App() {
 
     const droppedDate = new Date(`${dateValue}T${timeValue}`);
     scheduleTask(taskId, dayIndexFromDate(droppedDate, weekStart), minutesFromDate(droppedDate), 'manual', true);
+  }
+
+  function closeEventPopup() {
+    setSelectedEventId('');
+  }
+
+  function deleteSelectedEvent() {
+    if (!selectedEvent || !selectedEventTask) return;
+
+    if (selectedEvent.source === 'recurring') {
+      updateTask({...selectedEventTask, recurrence: 'none', recurrenceDay: NO_RECURRENCE_DAY});
+    } else {
+      deleteEvent(selectedEvent.id);
+    }
+
+    closeEventPopup();
   }
 
   const activeTask = activeTaskId ? tasks.find((task) => task.id === activeTaskId) : null;
@@ -880,14 +897,7 @@ export default function App() {
                   {conflictingEventIds.has(selectedEvent.id) && <span>This event overlaps another event.</span>}
                   <button
                     className="danger"
-                    onClick={() => {
-                      if (selectedEvent.source === 'recurring') {
-                        updateTask({...selectedTask, recurrence: 'none', recurrenceDay: NO_RECURRENCE_DAY});
-                      } else {
-                        deleteEvent(selectedEvent.id);
-                      }
-                      setSelectedEventId('');
-                    }}
+                    onClick={deleteSelectedEvent}
                     type="button"
                   >
                     Delete Event
@@ -970,6 +980,69 @@ export default function App() {
           </section>
         </aside>
       </main>
+
+      {selectedEvent && selectedEventTask && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={closeEventPopup}>
+          <section
+            aria-label="Event details"
+            aria-modal="true"
+            className={`event-modal ${conflictingEventIds.has(selectedEvent.id) ? 'warning' : ''}`}
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <header className="modal-header">
+              <div>
+                <p className="eyebrow">{selectedEvent.source === 'recurring' ? 'Recurring Event' : 'Scheduled Event'}</p>
+                <h2>{selectedEventTask.title}</h2>
+              </div>
+              <button aria-label="Close event details" className="icon-button" onClick={closeEventPopup} type="button">
+                x
+              </button>
+            </header>
+
+            <div className="event-modal-body">
+              <div className="event-time-row">
+                <strong>
+                  {days[selectedEvent.day]} {formatTime(selectedEvent.startMinute)} - {formatTime(selectedEvent.endMinute)}
+                </strong>
+                <span>{projectById.get(selectedEventTask.projectId)?.name ?? 'No project'}</span>
+              </div>
+
+              {conflictingEventIds.has(selectedEvent.id) && <p className="event-warning">This event overlaps another event.</p>}
+
+              <label>
+                Status
+                <select
+                  value={selectedEventTask.status}
+                  onChange={(event) => updateTask({...selectedEventTask, status: event.target.value as TaskStatus})}
+                >
+                  {statuses.map((status) => (
+                    <option key={status}>{status}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Description
+                <textarea
+                  rows={4}
+                  value={selectedEventTask.description}
+                  onChange={(event) => updateTask({...selectedEventTask, description: event.target.value})}
+                />
+              </label>
+            </div>
+
+            <footer className="modal-actions">
+              <button className="danger" onClick={deleteSelectedEvent} type="button">
+                Delete Event
+              </button>
+              <button onClick={closeEventPopup} type="button">
+                Done
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
 
       <DragOverlay>
         {activeTask ? (
