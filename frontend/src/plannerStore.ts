@@ -29,6 +29,7 @@ export type Task = {
 export type CalendarEvent = {
   id: string;
   taskId: string;
+  weekStart: string;
   day: number;
   startMinute: number;
   endMinute: number;
@@ -52,7 +53,6 @@ type PlannerStore = PlannerData & {
   updateEvent: (event: CalendarEvent) => void;
   deleteEvent: (eventId: string) => void;
   clearSchedule: () => void;
-  generateRecurringEvents: () => void;
   replaceData: (data: PlannerData) => void;
 };
 
@@ -165,10 +165,11 @@ function normalizeData(raw: Partial<PlannerData>): PlannerData {
     events: (raw.events ?? []).map((event) => ({
       id: event.id ?? crypto.randomUUID(),
       taskId: event.taskId ?? '',
+      weekStart: event.weekStart ?? '',
       day: Number(event.day) || 0,
       startMinute: Number(event.startMinute) || 9 * 60,
       endMinute: Number(event.endMinute) || 10 * 60,
-      source: event.source ?? 'manual',
+      source: event.source === 'recurring' ? 'recurring' : 'manual',
     })),
   };
 }
@@ -237,7 +238,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
     set((state) => {
       const task = state.tasks.find((item) => item.id === event.taskId);
       return withPersist(state, {
-        events: [...state.events, event],
+        events: [...state.events.filter((item) => item.source !== 'manual' || item.taskId !== event.taskId), event],
         tasks: task?.status === 'Todo' ? state.tasks.map((item) => (item.id === task.id ? {...item, status: 'Doing'} : item)) : state.tasks,
       });
     }),
@@ -248,37 +249,14 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
     set((state) =>
       withPersist(state, {
         events: [],
-        tasks: state.tasks.map((task) => ({...task, status: task.status === 'Done' ? 'Done' : 'Todo'})),
+        tasks: state.tasks.map((task) => ({
+          ...task,
+          recurrence: 'none',
+          recurrenceDay: NO_RECURRENCE_DAY,
+          status: task.status === 'Done' ? 'Done' : 'Todo',
+        })),
       }),
     ),
-  generateRecurringEvents: () =>
-    set((state) => {
-      const recurringEvents = state.tasks.flatMap((task) => {
-        if (task.recurrence === 'none') return [];
-
-        const targetDays =
-          task.recurrence === 'daily'
-            ? days.map((_, dayIndex) => dayIndex)
-            : task.recurrenceDay === NO_RECURRENCE_DAY
-              ? []
-              : [task.recurrenceDay];
-        return targetDays.map((day) => {
-          const startMinute = snapToQuarterHour(task.recurrenceStartMinute);
-          return {
-            id: crypto.randomUUID(),
-            taskId: task.id,
-            day,
-            startMinute,
-            endMinute: Math.min(24 * 60, startMinute + task.duration),
-            source: 'recurring' as const,
-          };
-        });
-      });
-
-      return withPersist(state, {
-        events: [...state.events.filter((event) => event.source !== 'recurring'), ...recurringEvents],
-      });
-    }),
   replaceData: (data) =>
     set(() => {
       persist(data);

@@ -28,7 +28,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.4';
+const APP_VERSION = 'v1.3.5';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -163,7 +163,6 @@ export default function App() {
   const updateEvent = usePlannerStore((state) => state.updateEvent);
   const deleteEvent = usePlannerStore((state) => state.deleteEvent);
   const clearSchedule = usePlannerStore((state) => state.clearSchedule);
-  const generateRecurringEvents = usePlannerStore((state) => state.generateRecurringEvents);
   const replaceData = usePlannerStore((state) => state.replaceData);
 
   const [selectedTaskId, setSelectedTaskId] = useState(tasks[0]?.id ?? '');
@@ -186,8 +185,8 @@ export default function App() {
     useSensor(KeyboardSensor),
   );
 
+  const weekKey = dateInputValue(weekStart);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
-  const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const allTags = useMemo(() => Array.from(new Set(tasks.flatMap((task) => task.tags))).sort(), [tasks]);
@@ -206,11 +205,38 @@ export default function App() {
   }, [projectFilter, query, statusFilter, tagFilter, tasks]);
 
   const filteredTaskIds = useMemo(() => new Set(filteredTasks.map((task) => task.id)), [filteredTasks]);
+  const scheduledEvents = useMemo(() => {
+    const manualEvents = events.filter((event) => event.source === 'manual' && event.weekStart === weekKey);
+    const recurringEvents = tasks.flatMap((task) => {
+      if (task.recurrence === 'none') return [];
+
+      const targetDays =
+        task.recurrence === 'daily'
+          ? days.map((_, dayIndex) => dayIndex)
+          : task.recurrenceDay === NO_RECURRENCE_DAY
+            ? []
+            : [task.recurrenceDay];
+      const startMinute = snapToQuarterHour(task.recurrenceStartMinute);
+
+      return targetDays.map((day) => ({
+        id: `recurring-${weekKey}-${task.id}-${day}`,
+        taskId: task.id,
+        weekStart: weekKey,
+        day,
+        startMinute,
+        endMinute: Math.min(24 * 60, startMinute + task.duration),
+        source: 'recurring' as const,
+      }));
+    });
+
+    return [...manualEvents, ...recurringEvents];
+  }, [events, tasks, weekKey]);
+  const selectedEvent = scheduledEvents.find((event) => event.id === selectedEventId) ?? null;
   const conflictGroups = useMemo(() => {
     const conflicts: {day: number; first: CalendarEvent; second: CalendarEvent}[] = [];
 
     for (const day of days.keys()) {
-      const dayEvents = events
+      const dayEvents = scheduledEvents
         .filter((event) => event.day === day)
         .sort((a, b) => a.startMinute - b.startMinute || a.endMinute - b.endMinute);
 
@@ -223,14 +249,14 @@ export default function App() {
     }
 
     return conflicts;
-  }, [events]);
+  }, [scheduledEvents]);
   const conflictingEventIds = useMemo(
     () => new Set(conflictGroups.flatMap((conflict) => [conflict.first.id, conflict.second.id])),
     [conflictGroups],
   );
   const calendarEvents = useMemo(
     () =>
-      events
+      scheduledEvents
         .filter((event) => filteredTaskIds.has(event.taskId))
         .map((event) => {
           const task = tasks.find((item) => item.id === event.taskId);
@@ -246,14 +272,14 @@ export default function App() {
             extendedProps: {conflict: conflictingEventIds.has(event.id), taskId: event.taskId, source: event.source},
           };
         }),
-    [conflictingEventIds, events, filteredTaskIds, projectById, tasks, weekStart],
+    [conflictingEventIds, filteredTaskIds, projectById, scheduledEvents, tasks, weekStart],
   );
 
   const summaries = useMemo(
     () =>
       projects.map((project) => {
         const projectTasks = tasks.filter((task) => task.projectId === project.id);
-        const scheduledMinutes = events
+        const scheduledMinutes = scheduledEvents
           .filter((event) => projectTasks.some((task) => task.id === event.taskId))
           .reduce((total, event) => total + event.endMinute - event.startMinute, 0);
         const doneMinutes = projectTasks
@@ -262,7 +288,7 @@ export default function App() {
         const plannedMinutes = projectTasks.reduce((total, task) => total + task.duration, 0);
         return {...project, doneMinutes, plannedMinutes, scheduledMinutes, taskCount: projectTasks.length};
       }),
-    [events, projects, tasks],
+    [projects, scheduledEvents, tasks],
   );
 
   function scheduleTask(taskId: string, day: number, minute: number, source: CalendarEvent['source'] = 'manual', reflectDay = false) {
@@ -270,9 +296,19 @@ export default function App() {
     if (!task || day < 0 || day > 6) return;
 
     const startMinute = snapToQuarterHour(minute);
+    if (task.recurrence !== 'none') {
+      updateTask({
+        ...task,
+        recurrenceDay: task.recurrence === 'weekly' ? day : task.recurrenceDay,
+        recurrenceStartMinute: startMinute,
+      });
+      return;
+    }
+
     addEvent({
       id: crypto.randomUUID(),
       taskId,
+      weekStart: weekKey,
       day,
       startMinute,
       endMinute: Math.min(24 * 60, startMinute + task.duration),
@@ -303,7 +339,7 @@ export default function App() {
   }
 
   function updateEventFromDates(eventId: string, start: Date | null, end: Date | null) {
-    const current = events.find((event) => event.id === eventId);
+    const current = scheduledEvents.find((event) => event.id === eventId);
     if (!current || !start) return;
 
     const day = dayIndexFromDate(start, weekStart);
@@ -311,6 +347,20 @@ export default function App() {
 
     const startMinute = snapToQuarterHour(minutesFromDate(start));
     const endMinute = end ? Math.max(startMinute + 15, snapToQuarterHour(minutesFromDate(end))) : current.endMinute;
+
+    if (current.source === 'recurring') {
+      const task = tasks.find((item) => item.id === current.taskId);
+      if (!task) return;
+
+      updateTask({
+        ...task,
+        recurrenceDay: task.recurrence === 'weekly' ? day : task.recurrenceDay,
+        recurrenceStartMinute: startMinute,
+        duration: endMinute - startMinute,
+      });
+      return;
+    }
+
     updateEvent({...current, day, startMinute, endMinute});
   }
 
@@ -544,9 +594,6 @@ export default function App() {
               </button>
               <button type="button" onClick={() => moveWeek(1)}>
                 Next
-              </button>
-              <button type="button" onClick={generateRecurringEvents}>
-                Generate Recurring
               </button>
               <button type="button" onClick={clearSchedule}>
                 Clear Schedule
@@ -834,7 +881,11 @@ export default function App() {
                   <button
                     className="danger"
                     onClick={() => {
-                      deleteEvent(selectedEvent.id);
+                      if (selectedEvent.source === 'recurring') {
+                        updateTask({...selectedTask, recurrence: 'none', recurrenceDay: NO_RECURRENCE_DAY});
+                      } else {
+                        deleteEvent(selectedEvent.id);
+                      }
                       setSelectedEventId('');
                     }}
                     type="button"
