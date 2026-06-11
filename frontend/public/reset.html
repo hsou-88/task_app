@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reset Research Planner Cache</title>
+    <style>
+      body {
+        align-items: center;
+        background: #f4f6f8;
+        color: #1b2430;
+        display: flex;
+        font-family: system-ui, sans-serif;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+
+      main {
+        background: #fff;
+        border: 1px solid #d9e1ea;
+        border-radius: 8px;
+        max-width: 420px;
+        padding: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Refreshing Research Planner</h1>
+      <p>Clearing old offline caches and returning to the app.</p>
+    </main>
+    <script>
+      async function reset() {
+        if ('serviceWorker' in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map((registration) => registration.unregister()));
+        }
+
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((key) => caches.delete(key)));
+        }
+
+        location.replace('/?reset=' + Date.now());
+      }
+
+      reset();
+    </script>
+  </body>
+</html>

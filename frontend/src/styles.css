@@ -13,6 +13,7 @@
 
 body {
   margin: 0;
+  overscroll-behavior: none;
 }
 
 button,
@@ -24,6 +25,7 @@ textarea {
 
 button {
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .planner-shell {
@@ -208,12 +210,22 @@ button:hover {
   padding: 12px;
   position: relative;
   text-align: left;
+  touch-action: none;
 }
 
 .task-card:hover,
 .task-card.selected {
   background: #eef5ff;
   border-color: #2e6fbb;
+}
+
+.task-card.dragging {
+  opacity: 0.42;
+}
+
+.drag-overlay {
+  box-shadow: 0 16px 36px rgba(24, 40, 62, 0.2);
+  width: 260px;
 }
 
 .project-dot {
@@ -265,7 +277,9 @@ button:hover {
 
 .toolbar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
 }
 
 .toolbar-actions button,
@@ -310,6 +324,120 @@ button:hover {
   right: 10px;
   top: 10px;
   width: 32px;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.week-status {
+  align-items: flex-start;
+  background: #ffffff;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+
+.conflict-list {
+  color: #9b2d2d;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.conflict-list span {
+  background: #fff1f1;
+  border: 1px solid #f0baba;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
+.no-conflicts {
+  color: #168260;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.calendar-frame {
+  background: #ffffff;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fc {
+  color: #1b2430;
+  height: 100%;
+}
+
+.fc .fc-scrollgrid,
+.fc .fc-theme-standard td,
+.fc .fc-theme-standard th {
+  border-color: #e3e9f0;
+}
+
+.fc .fc-col-header-cell {
+  background: #fbfcfe;
+  font-size: 12px;
+  font-weight: 900;
+  height: 42px;
+  text-transform: uppercase;
+}
+
+.fc .fc-timegrid-slot {
+  height: 16px;
+}
+
+.fc .fc-timegrid-slot-label {
+  color: #667587;
+  font-size: 11px;
+}
+
+.fc .fc-event {
+  border-radius: 8px;
+  box-shadow: none;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.fc .fc-event.has-conflict {
+  border-color: #c14242 !important;
+  box-shadow: inset 0 0 0 2px #c14242;
+}
+
+.fc .fc-event.is-selected {
+  outline: 3px solid rgba(29, 79, 145, 0.28);
+  outline-offset: 1px;
+}
+
+.fc .fc-event:active {
+  cursor: grabbing;
+}
+
+.fc-task-event {
+  display: grid;
+  gap: 2px;
+  line-height: 1.2;
+  padding: 4px 6px;
+}
+
+.fc-task-event strong {
+  font-size: 12px;
+}
+
+.fc-task-event span {
+  color: #4b5969;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .week-calendar {
@@ -472,6 +600,26 @@ button:hover {
   padding-bottom: 0;
 }
 
+.event-detail {
+  background: #f7fbff;
+  border: 1px solid #c6d8eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.event-detail.warning {
+  background: #fff7f7;
+  border-color: #e3a9a9;
+}
+
+.event-detail span {
+  color: #5c6a7a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .selected-project {
   border-top: 1px solid #e5ebf2;
   margin-top: 6px;
@@ -489,31 +637,115 @@ button:hover {
 
 @media (max-width: 1240px) {
   .planner-shell {
-    grid-template-columns: 340px minmax(720px, 1fr);
-  }
-
-  .detail-panel {
-    display: none;
+    grid-template-columns: 330px minmax(620px, 1fr);
   }
 }
 
 @media (max-width: 900px) {
   .planner-shell {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto minmax(72vh, auto) auto;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
   }
 
   .sidebar {
     border-bottom: 1px solid #d9e1ea;
     border-right: 0;
-    max-height: 46vh;
+    max-height: none;
+    overflow: visible;
   }
 
   .workspace {
+    min-height: 72vh;
     padding: 12px;
+    overflow: visible;
+  }
+
+  .detail-panel {
+    border-left: 0;
+    border-top: 1px solid #d9e1ea;
+    overflow: visible;
   }
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+
+  .calendar-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .toolbar-actions {
+    justify-content: flex-start;
+  }
+
+  .toolbar-actions button {
+    flex: 1 1 92px;
+  }
+
+  .week-status {
+    flex-direction: column;
+  }
+
+  .calendar-frame {
+    min-height: 720px;
+    overflow-x: auto;
+  }
+
+  .fc {
+    min-width: 760px;
+  }
+
+  .gantt-chart {
+    overflow-x: auto;
+  }
+
+  .gantt-row {
+    grid-template-columns: 180px repeat(7, minmax(82px, 1fr));
+    min-width: 754px;
+  }
+}
+
+@media (max-width: 560px) {
+  .sidebar,
+  .detail-panel {
+    padding: 14px;
+  }
+
+  .field-grid,
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-panel {
+    gap: 10px;
+  }
+
+  h1 {
+    font-size: 24px;
+  }
+
+  .task-create-panel,
+  .filters {
+    padding-bottom: 14px;
+  }
+
+  .kanban {
+    gap: 12px;
+  }
+
+  .task-card {
+    min-height: 84px;
+  }
+
+  .calendar-frame {
+    min-height: 680px;
+  }
+
+  .fc {
+    min-width: 700px;
   }
 }

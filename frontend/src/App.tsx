@@ -1,201 +1,183 @@
-import {FormEvent, useEffect, useMemo, useState} from 'react';
+import FullCalendar from '@fullcalendar/react';
+import interactionPlugin from '@fullcalendar/interaction';
+import timeGridPlugin from '@fullcalendar/timegrid';
+import {DndContext, DragEndEvent, DragOverlay, useDraggable} from '@dnd-kit/core';
+import {FormEvent, useMemo, useRef, useState} from 'react';
+import {
+  CalendarEvent,
+  Project,
+  Recurrence,
+  Task,
+  TaskStatus,
+  days,
+  formatTime,
+  normalizePlannerData,
+  parseTags,
+  projectColors,
+  snapToQuarterHour,
+  statuses,
+  usePlannerStore,
+} from './plannerStore';
 
-type TaskStatus = 'Todo' | 'Doing' | 'Done';
-type Recurrence = 'none' | 'daily' | 'weekly';
 type ViewMode = 'calendar' | 'gantt';
+type FilterValue = TaskStatus | 'all';
 
-type Project = {
-  id: string;
-  name: string;
-  color: string;
-  goal: string;
-};
-
-type Task = {
-  id: string;
-  title: string;
-  description: string;
-  duration: number;
-  status: TaskStatus;
-  projectId: string;
-  tags: string[];
-  recurrence: Recurrence;
-  recurrenceDay: number;
-  recurrenceStartMinute: number;
-  ganttStartDay: number;
-  ganttEndDay: number;
-};
-
-type CalendarEvent = {
-  id: string;
-  taskId: string;
-  day: number;
-  startMinute: number;
-  endMinute: number;
-  source: 'manual' | 'recurring';
-};
-
-type PlannerData = {
-  projects: Project[];
-  tasks: Task[];
-  events: CalendarEvent[];
-};
-
-const STORAGE_KEY = 'research-planner-v0.4';
-const legacyStorageKey = 'research-planner-v0.1';
-const statuses: TaskStatus[] = ['Todo', 'Doing', 'Done'];
 const recurrenceOptions: {label: string; value: Recurrence}[] = [
-  {label: 'なし', value: 'none'},
-  {label: '毎日', value: 'daily'},
-  {label: '毎週', value: 'weekly'},
+  {label: 'None', value: 'none'},
+  {label: 'Daily', value: 'daily'},
+  {label: 'Weekly', value: 'weekly'},
 ];
-const days = ['月', '火', '水', '木', '金', '土', '日'];
-const projectColors = ['#2e6fbb', '#168260', '#b45b2a', '#8c5ab8', '#ad3f5f', '#5d6b7a'];
-const hourHeight = 64;
+const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
-const defaultProjects: Project[] = [
-  {id: 'master-research', name: '修士研究', color: '#2e6fbb', goal: '文献調査から論文執筆までを前に進める'},
-  {id: 'classes', name: '授業', color: '#168260', goal: '課題と予習を締切前に処理する'},
-  {id: 'english', name: '英語学習', color: '#b45b2a', goal: '毎日少しずつ読む・聞く時間を確保する'},
-  {id: 'dev', name: '個人開発', color: '#8c5ab8', goal: '作りたいものを小さく実装して公開する'},
-];
-
-const initialData: PlannerData = {
-  projects: defaultProjects,
-  tasks: [
-    {
-      id: crypto.randomUUID(),
-      title: '論文Aを読む',
-      description: '関連研究の主張、手法、限界をメモする',
-      duration: 120,
-      status: 'Todo',
-      projectId: 'master-research',
-      tags: ['paper', 'research'],
-      recurrence: 'weekly',
-      recurrenceDay: 1,
-      recurrenceStartMinute: 13 * 60,
-      ganttStartDay: 0,
-      ganttEndDay: 2,
-    },
-    {
-      id: crypto.randomUUID(),
-      title: 'ゼミ資料を作る',
-      description: '進捗、課題、次の実験計画をまとめる',
-      duration: 90,
-      status: 'Doing',
-      projectId: 'master-research',
-      tags: ['seminar'],
-      recurrence: 'weekly',
-      recurrenceDay: 3,
-      recurrenceStartMinute: 10 * 60,
-      ganttStartDay: 2,
-      ganttEndDay: 4,
-    },
-    {
-      id: crypto.randomUUID(),
-      title: '英語シャドーイング',
-      description: '発音とリズムを意識して練習する',
-      duration: 45,
-      status: 'Todo',
-      projectId: 'english',
-      tags: ['english', 'habit'],
-      recurrence: 'daily',
-      recurrenceDay: 0,
-      recurrenceStartMinute: 8 * 60,
-      ganttStartDay: 0,
-      ganttEndDay: 6,
-    },
-  ],
-  events: [],
-};
-
-function formatTime(totalMinutes: number) {
-  const clamped = Math.max(0, Math.min(24 * 60, totalMinutes));
-  const hours = Math.floor(clamped / 60);
-  const minutes = clamped % 60;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+function startOfWeek(date: Date) {
+  const copy = new Date(date);
+  const day = copy.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  copy.setDate(copy.getDate() + diff);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
 }
 
-function snapToQuarterHour(value: number) {
-  return Math.max(0, Math.min(24 * 60 - 15, Math.round(value / 15) * 15));
+function addDays(date: Date, daysToAdd: number) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + daysToAdd);
+  return copy;
 }
 
-function parseTags(value: FormDataEntryValue | null) {
-  return String(value ?? '')
-    .split(',')
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+function minutesFromDate(date: Date) {
+  return date.getHours() * 60 + date.getMinutes();
 }
 
-function normalizeTask(raw: Partial<Task>, projectId: string): Task {
+function dayIndexFromDate(date: Date, weekStart: Date) {
+  const start = new Date(weekStart);
+  start.setHours(0, 0, 0, 0);
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - start.getTime()) / 86_400_000);
+}
+
+function eventDate(weekStart: Date, day: number, minute: number) {
+  const date = addDays(weekStart, day);
+  date.setHours(Math.floor(minute / 60), minute % 60, 0, 0);
+  return date;
+}
+
+function getInitialWeekStart() {
+  const saved = localStorage.getItem(WEEK_STORAGE_KEY);
+  if (saved) {
+    const date = new Date(saved);
+    if (!Number.isNaN(date.getTime())) return startOfWeek(date);
+  }
+
+  return startOfWeek(new Date());
+}
+
+function dateInputValue(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function createTaskFromForm(formData: FormData, fallbackProjectId: string): Task {
+  const duration = Number(formData.get('duration') ?? 60);
+  const ganttStartDay = Number(formData.get('ganttStartDay') ?? 0);
+
   return {
-    id: raw.id ?? crypto.randomUUID(),
-    title: raw.title ?? 'Untitled',
-    description: raw.description ?? '',
-    duration: Number(raw.duration) || 60,
-    status: raw.status ?? 'Todo',
-    projectId: raw.projectId ?? projectId,
-    tags: raw.tags ?? [],
-    recurrence: raw.recurrence ?? 'none',
-    recurrenceDay: raw.recurrenceDay ?? 0,
-    recurrenceStartMinute: raw.recurrenceStartMinute ?? 9 * 60,
-    ganttStartDay: raw.ganttStartDay ?? 0,
-    ganttEndDay: raw.ganttEndDay ?? Math.min(6, raw.ganttStartDay ?? 0),
+    id: crypto.randomUUID(),
+    title: String(formData.get('title') ?? '').trim(),
+    description: String(formData.get('description') ?? '').trim(),
+    duration: Number.isFinite(duration) ? Math.max(15, duration) : 60,
+    status: 'Todo',
+    projectId: String(formData.get('projectId') ?? fallbackProjectId),
+    tags: parseTags(formData.get('tags')),
+    recurrence: String(formData.get('recurrence') ?? 'none') as Recurrence,
+    recurrenceDay: Number(formData.get('recurrenceDay') ?? 0),
+    recurrenceStartMinute: Number(formData.get('recurrenceStartMinute') ?? 9 * 60),
+    ganttStartDay,
+    ganttEndDay: Math.max(ganttStartDay, Number(formData.get('ganttEndDay') ?? ganttStartDay)),
   };
 }
 
-function loadPlannerData(): PlannerData {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved) as Partial<PlannerData>;
-      const projects = parsed.projects?.length ? parsed.projects : defaultProjects;
-      return {
-        projects,
-        tasks: (parsed.tasks ?? []).map((task) => normalizeTask(task, projects[0].id)),
-        events: (parsed.events ?? []).map((event) => ({...event, source: event.source ?? 'manual'})),
-      };
-    } catch {
-      return initialData;
-    }
-  }
+function createProjectFromForm(formData: FormData): Project {
+  return {
+    id: crypto.randomUUID(),
+    name: String(formData.get('name') ?? '').trim(),
+    color: String(formData.get('color') ?? projectColors[0]),
+    goal: String(formData.get('goal') ?? '').trim(),
+  };
+}
 
-  const legacy = localStorage.getItem(legacyStorageKey);
-  if (!legacy) return initialData;
+function DraggableTaskCard({
+  project,
+  selected,
+  task,
+  onSelect,
+}: {
+  project?: Project;
+  selected: boolean;
+  task: Task;
+  onSelect: () => void;
+}) {
+  const {attributes, listeners, setNodeRef, transform, isDragging} = useDraggable({
+    id: task.id,
+    data: {taskId: task.id},
+  });
 
-  try {
-    const parsed = JSON.parse(legacy) as {tasks?: Partial<Task>[]; events?: Partial<CalendarEvent>[]};
-    return {
-      projects: defaultProjects,
-      tasks: (parsed.tasks ?? []).map((task) => normalizeTask(task, defaultProjects[0].id)),
-      events: (parsed.events ?? []).map((event) => ({
-        id: event.id ?? crypto.randomUUID(),
-        taskId: event.taskId ?? '',
-        day: event.day ?? 0,
-        startMinute: event.startMinute ?? 9 * 60,
-        endMinute: event.endMinute ?? 10 * 60,
-        source: 'manual',
-      })),
-    };
-  } catch {
-    return initialData;
-  }
+  return (
+    <button
+      className={`task-card ${selected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
+      onClick={onSelect}
+      ref={setNodeRef}
+      style={{
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+      }}
+      type="button"
+      {...listeners}
+      {...attributes}
+    >
+      <span className="project-dot" style={{backgroundColor: project?.color}} />
+      <strong>{task.title}</strong>
+      <span>
+        {task.duration} min / {project?.name ?? 'No project'}
+      </span>
+      <div className="tag-row">
+        {task.tags.map((tag) => (
+          <small key={tag}>{tag}</small>
+        ))}
+      </div>
+    </button>
+  );
 }
 
 export default function App() {
-  const [plannerData, setPlannerData] = useState<PlannerData>(loadPlannerData);
-  const [selectedTaskId, setSelectedTaskId] = useState(plannerData.tasks[0]?.id ?? '');
-  const [selectedProjectId, setSelectedProjectId] = useState(plannerData.projects[0]?.id ?? '');
+  const projects = usePlannerStore((state) => state.projects);
+  const tasks = usePlannerStore((state) => state.tasks);
+  const events = usePlannerStore((state) => state.events);
+  const addTask = usePlannerStore((state) => state.addTask);
+  const updateTask = usePlannerStore((state) => state.updateTask);
+  const deleteTask = usePlannerStore((state) => state.deleteTask);
+  const addProject = usePlannerStore((state) => state.addProject);
+  const updateProject = usePlannerStore((state) => state.updateProject);
+  const addEvent = usePlannerStore((state) => state.addEvent);
+  const updateEvent = usePlannerStore((state) => state.updateEvent);
+  const deleteEvent = usePlannerStore((state) => state.deleteEvent);
+  const clearSchedule = usePlannerStore((state) => state.clearSchedule);
+  const generateRecurringEvents = usePlannerStore((state) => state.generateRecurringEvents);
+  const replaceData = usePlannerStore((state) => state.replaceData);
+
+  const [selectedTaskId, setSelectedTaskId] = useState(tasks[0]?.id ?? '');
+  const [selectedEventId, setSelectedEventId] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState(projects[0]?.id ?? '');
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<FilterValue>('all');
   const [projectFilter, setProjectFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState('all');
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [weekStart, setWeekStartState] = useState(getInitialWeekStart);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const {projects, tasks, events} = plannerData;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
-
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const allTags = useMemo(() => Array.from(new Set(tasks.flatMap((task) => task.tags))).sort(), [tasks]);
 
@@ -213,16 +195,47 @@ export default function App() {
   }, [projectFilter, query, statusFilter, tagFilter, tasks]);
 
   const filteredTaskIds = useMemo(() => new Set(filteredTasks.map((task) => task.id)), [filteredTasks]);
-  const filteredEvents = useMemo(() => events.filter((event) => filteredTaskIds.has(event.taskId)), [events, filteredTaskIds]);
+  const conflictGroups = useMemo(() => {
+    const conflicts: {day: number; first: CalendarEvent; second: CalendarEvent}[] = [];
 
-  const eventsByDay = useMemo(
+    for (const day of days.keys()) {
+      const dayEvents = events
+        .filter((event) => event.day === day)
+        .sort((a, b) => a.startMinute - b.startMinute || a.endMinute - b.endMinute);
+
+      for (let index = 0; index < dayEvents.length; index += 1) {
+        for (let next = index + 1; next < dayEvents.length; next += 1) {
+          if (dayEvents[index].endMinute <= dayEvents[next].startMinute) break;
+          conflicts.push({day, first: dayEvents[index], second: dayEvents[next]});
+        }
+      }
+    }
+
+    return conflicts;
+  }, [events]);
+  const conflictingEventIds = useMemo(
+    () => new Set(conflictGroups.flatMap((conflict) => [conflict.first.id, conflict.second.id])),
+    [conflictGroups],
+  );
+  const calendarEvents = useMemo(
     () =>
-      days.map((_, dayIndex) =>
-        filteredEvents
-          .filter((event) => event.day === dayIndex)
-          .sort((a, b) => a.startMinute - b.startMinute),
-      ),
-    [filteredEvents],
+      events
+        .filter((event) => filteredTaskIds.has(event.taskId))
+        .map((event) => {
+          const task = tasks.find((item) => item.id === event.taskId);
+          const project = task ? projectById.get(task.projectId) : undefined;
+          return {
+            id: event.id,
+            title: task?.title ?? 'Deleted task',
+            start: eventDate(weekStart, event.day, event.startMinute),
+            end: eventDate(weekStart, event.day, event.endMinute),
+            backgroundColor: event.source === 'recurring' ? '#fff3d8' : '#dff3ea',
+            borderColor: project?.color ?? '#75b997',
+            textColor: '#1b2430',
+            extendedProps: {conflict: conflictingEventIds.has(event.id), taskId: event.taskId, source: event.source},
+          };
+        }),
+    [conflictingEventIds, events, filteredTaskIds, projectById, tasks, weekStart],
   );
 
   const summaries = useMemo(
@@ -236,178 +249,477 @@ export default function App() {
           .filter((task) => task.status === 'Done')
           .reduce((total, task) => total + task.duration, 0);
         const plannedMinutes = projectTasks.reduce((total, task) => total + task.duration, 0);
-
-        return {
-          ...project,
-          taskCount: projectTasks.length,
-          plannedMinutes,
-          scheduledMinutes,
-          doneMinutes,
-        };
+        return {...project, doneMinutes, plannedMinutes, scheduledMinutes, taskCount: projectTasks.length};
       }),
     [events, projects, tasks],
   );
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(plannerData));
-  }, [plannerData]);
+  function scheduleTask(taskId: string, day: number, minute: number, source: CalendarEvent['source'] = 'manual') {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task || day < 0 || day > 6) return;
 
-  function setTasks(updater: (current: Task[]) => Task[]) {
-    setPlannerData((current) => ({...current, tasks: updater(current.tasks)}));
-  }
-
-  function setEvents(updater: (current: CalendarEvent[]) => CalendarEvent[]) {
-    setPlannerData((current) => ({...current, events: updater(current.events)}));
-  }
-
-  function setProjects(updater: (current: Project[]) => Project[]) {
-    setPlannerData((current) => ({...current, projects: updater(current.projects)}));
-  }
-
-  function createTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const title = String(formData.get('title') ?? '').trim();
-    const duration = Number(formData.get('duration') ?? 60);
-    const ganttStartDay = Number(formData.get('ganttStartDay') ?? 0);
-
-    if (!title) return;
-
-    const task: Task = {
+    const startMinute = snapToQuarterHour(minute);
+    addEvent({
       id: crypto.randomUUID(),
-      title,
-      description: String(formData.get('description') ?? '').trim(),
-      duration: Number.isFinite(duration) ? Math.max(15, duration) : 60,
-      status: 'Todo',
-      projectId: String(formData.get('projectId') ?? projects[0]?.id),
-      tags: parseTags(formData.get('tags')),
-      recurrence: String(formData.get('recurrence') ?? 'none') as Recurrence,
-      recurrenceDay: Number(formData.get('recurrenceDay') ?? 0),
-      recurrenceStartMinute: Number(formData.get('recurrenceStartMinute') ?? 9 * 60),
-      ganttStartDay,
-      ganttEndDay: Math.max(ganttStartDay, Number(formData.get('ganttEndDay') ?? ganttStartDay)),
-    };
+      taskId,
+      day,
+      startMinute,
+      endMinute: Math.min(24 * 60, startMinute + task.duration),
+      source,
+    });
+  }
 
-    setTasks((current) => [task, ...current]);
+  function handleCreateTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const task = createTaskFromForm(new FormData(event.currentTarget), projects[0]?.id ?? '');
+    if (!task.title) return;
+    addTask(task);
     setSelectedTaskId(task.id);
     event.currentTarget.reset();
   }
 
-  function createProject(event: FormEvent<HTMLFormElement>) {
+  function handleCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const name = String(formData.get('name') ?? '').trim();
-    if (!name) return;
-
-    const project: Project = {
-      id: crypto.randomUUID(),
-      name,
-      color: String(formData.get('color') ?? projectColors[0]),
-      goal: String(formData.get('goal') ?? '').trim(),
-    };
-
-    setProjects((current) => [...current, project]);
+    const project = createProjectFromForm(new FormData(event.currentTarget));
+    if (!project.name) return;
+    addProject(project);
     setSelectedProjectId(project.id);
     event.currentTarget.reset();
   }
 
-  function updateTask(updated: Task) {
-    setTasks((current) => current.map((task) => (task.id === updated.id ? updated : task)));
+  function updateEventFromDates(eventId: string, start: Date | null, end: Date | null) {
+    const current = events.find((event) => event.id === eventId);
+    if (!current || !start) return;
+
+    const day = dayIndexFromDate(start, weekStart);
+    if (day < 0 || day > 6) return;
+
+    const startMinute = snapToQuarterHour(minutesFromDate(start));
+    const endMinute = end ? Math.max(startMinute + 15, snapToQuarterHour(minutesFromDate(end))) : current.endMinute;
+    updateEvent({...current, day, startMinute, endMinute});
   }
 
-  function updateProject(updated: Project) {
-    setProjects((current) => current.map((project) => (project.id === updated.id ? updated : project)));
+  function setWeekStart(nextWeekStart: Date) {
+    const normalized = startOfWeek(nextWeekStart);
+    localStorage.setItem(WEEK_STORAGE_KEY, normalized.toISOString());
+    setWeekStartState(normalized);
   }
 
-  function deleteTask(taskId: string) {
-    setTasks((current) => current.filter((task) => task.id !== taskId));
-    setEvents((current) => current.filter((event) => event.taskId !== taskId));
-    setSelectedTaskId((current) => (current === taskId ? tasks.find((task) => task.id !== taskId)?.id ?? '' : current));
+  function moveWeek(offset: number) {
+    setWeekStart(addDays(weekStart, offset * 7));
   }
 
-  function scheduleTask(taskId: string, day: number, minute: number, source: CalendarEvent['source'] = 'manual') {
-    const task = tasks.find((item) => item.id === taskId);
-    if (!task) return;
-
-    const startMinute = snapToQuarterHour(minute);
-    const endMinute = Math.min(24 * 60, startMinute + task.duration);
-
-    setEvents((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        taskId,
-        day,
-        startMinute,
-        endMinute,
-        source,
-      },
-    ]);
-
-    if (task.status === 'Todo') updateTask({...task, status: 'Doing'});
+  function exportBackup() {
+    const data = JSON.stringify({projects, tasks, events}, null, 2);
+    const blob = new Blob([data], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `research-planner-${dateInputValue(new Date())}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
-  function handleDrop(event: React.DragEvent<HTMLDivElement>, day: number) {
-    event.preventDefault();
-    const taskId = event.dataTransfer.getData('text/plain');
-    const rect = event.currentTarget.getBoundingClientRect();
-    const offsetY = event.clientY - rect.top;
-    const minute = (offsetY / (24 * hourHeight)) * 24 * 60;
-    scheduleTask(taskId, day, minute);
-  }
+  function importBackup(file: File | undefined) {
+    if (!file) return;
 
-  function generateRecurringEvents() {
-    const recurringEvents = tasks.flatMap((task) => {
-      if (task.recurrence === 'none') return [];
-      const targetDays = task.recurrence === 'daily' ? days.map((_, dayIndex) => dayIndex) : [task.recurrenceDay];
-
-      return targetDays.map((day) => ({
-        id: crypto.randomUUID(),
-        taskId: task.id,
-        day,
-        startMinute: snapToQuarterHour(task.recurrenceStartMinute),
-        endMinute: Math.min(24 * 60, snapToQuarterHour(task.recurrenceStartMinute) + task.duration),
-        source: 'recurring' as const,
-      }));
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      try {
+        const imported = normalizePlannerData(JSON.parse(String(reader.result)));
+        replaceData(imported);
+        setSelectedTaskId(imported.tasks[0]?.id ?? '');
+        setSelectedEventId('');
+        setSelectedProjectId(imported.projects[0]?.id ?? '');
+      } catch {
+        window.alert('Could not import this backup file.');
+      }
     });
-
-    setEvents((current) => [...current.filter((event) => event.source !== 'recurring'), ...recurringEvents]);
+    reader.readAsText(file);
   }
 
-  function clearSchedule() {
-    setEvents(() => []);
-    setTasks((current) => current.map((task) => ({...task, status: task.status === 'Done' ? 'Done' : 'Todo'})));
+  function handleTaskDragEnd(event: DragEndEvent) {
+    setActiveTaskId(null);
+    const taskId = String(event.active.id);
+    const rect = event.active.rect.current.translated;
+    if (!rect) return;
+
+    const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const dateElement = target?.closest('[data-date]');
+    const timeElement = target?.closest('[data-time]');
+    const dateValue = dateElement?.getAttribute('data-date');
+    const timeValue = timeElement?.getAttribute('data-time');
+    if (!dateValue || !timeValue) return;
+
+    const droppedDate = new Date(`${dateValue}T${timeValue}`);
+    scheduleTask(taskId, dayIndexFromDate(droppedDate, weekStart), minutesFromDate(droppedDate));
   }
+
+  const activeTask = activeTaskId ? tasks.find((task) => task.id === activeTaskId) : null;
 
   return (
-    <main className="planner-shell">
-      <aside className="sidebar">
-        <section className="brand-panel">
-          <p className="eyebrow">Research Planner</p>
-          <h1>Week Blocking</h1>
-          <div className="view-switch" role="tablist" aria-label="表示切替">
-            <button className={viewMode === 'calendar' ? 'active' : ''} onClick={() => setViewMode('calendar')} type="button">
-              Calendar
-            </button>
-            <button className={viewMode === 'gantt' ? 'active' : ''} onClick={() => setViewMode('gantt')} type="button">
-              Gantt
-            </button>
-          </div>
+    <DndContext onDragEnd={handleTaskDragEnd} onDragStart={(event) => setActiveTaskId(String(event.active.id))}>
+      <main className="planner-shell">
+        <aside className="sidebar">
+          <section className="brand-panel">
+            <p className="eyebrow">Research Planner</p>
+            <h1>Week Blocking</h1>
+            <div className="view-switch" role="tablist" aria-label="View mode">
+              <button className={viewMode === 'calendar' ? 'active' : ''} onClick={() => setViewMode('calendar')} type="button">
+                Calendar
+              </button>
+              <button className={viewMode === 'gantt' ? 'active' : ''} onClick={() => setViewMode('gantt')} type="button">
+                Gantt
+              </button>
+            </div>
+          </section>
+
+          <section className="task-create-panel" aria-label="Create task">
+            <h2>Create Task</h2>
+            <form onSubmit={handleCreateTask} className="stack-form">
+              <input name="title" placeholder="Task title" required />
+              <textarea name="description" placeholder="Description" rows={3} />
+              <div className="field-grid">
+                <label>
+                  Minutes
+                  <input name="duration" type="number" min="15" step="15" defaultValue="60" />
+                </label>
+                <label>
+                  Project
+                  <select name="projectId" defaultValue={projects[0]?.id}>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <input name="tags" placeholder="Tags: paper, seminar" />
+              <div className="field-grid">
+                <label>
+                  Recurrence
+                  <select name="recurrence" defaultValue="none">
+                    {recurrenceOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Day
+                  <select name="recurrenceDay" defaultValue={0}>
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label>
+                Recurrence time
+                <select name="recurrenceStartMinute" defaultValue={9 * 60}>
+                  {Array.from({length: 24}, (_, hour) => (
+                    <option key={hour} value={hour * 60}>
+                      {formatTime(hour * 60)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="field-grid">
+                <label>
+                  Gantt start
+                  <select name="ganttStartDay" defaultValue={0}>
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Gantt end
+                  <select name="ganttEndDay" defaultValue={0}>
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <button type="submit">Add Task</button>
+            </form>
+          </section>
+
+          <section className="filters" aria-label="Search and filters">
+            <h2>Search and Filters</h2>
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, description, tags" />
+            <div className="field-grid">
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as FilterValue)}>
+                <option value="all">All statuses</option>
+                {statuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+              <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
+                <option value="all">All projects</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
+              <option value="all">All tags</option>
+              {allTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          </section>
+
+          <section className="kanban" aria-label="Tasks">
+            {statuses.map((status) => (
+              <div className="kanban-column" key={status}>
+                <header>
+                  <h2>{status}</h2>
+                  <span>{filteredTasks.filter((task) => task.status === status).length}</span>
+                </header>
+
+                <div className="task-list">
+                  {filteredTasks
+                    .filter((task) => task.status === status)
+                    .map((task) => (
+                      <DraggableTaskCard
+                        key={task.id}
+                        onSelect={() => setSelectedTaskId(task.id)}
+                        project={projectById.get(task.projectId)}
+                        selected={selectedTaskId === task.id}
+                        task={task}
+                      />
+                    ))}
+                </div>
+              </div>
+            ))}
+          </section>
+        </aside>
+
+        <section className="workspace">
+          <header className="calendar-toolbar">
+            <div>
+              <p className="eyebrow">FullCalendar / dnd-kit / Zustand / PWA</p>
+              <h2>{viewMode === 'calendar' ? 'Weekly Calendar' : 'Gantt Chart'}</h2>
+            </div>
+            <div className="toolbar-actions">
+              <button type="button" onClick={() => moveWeek(-1)}>
+                Prev
+              </button>
+              <button type="button" onClick={() => setWeekStart(new Date())}>
+                Today
+              </button>
+              <button type="button" onClick={() => moveWeek(1)}>
+                Next
+              </button>
+              <button type="button" onClick={generateRecurringEvents}>
+                Generate Recurring
+              </button>
+              <button type="button" onClick={clearSchedule}>
+                Clear Schedule
+              </button>
+              <button type="button" onClick={exportBackup}>
+                Export
+              </button>
+              <button type="button" onClick={() => fileInputRef.current?.click()}>
+                Import
+              </button>
+              <input
+                accept="application/json"
+                className="hidden-input"
+                onChange={(event) => {
+                  importBackup(event.target.files?.[0]);
+                  event.target.value = '';
+                }}
+                ref={fileInputRef}
+                type="file"
+              />
+            </div>
+          </header>
+
+          <section className="summary-grid" aria-label="Project summaries">
+            {summaries.map((summary) => (
+              <button
+                className={`summary-card ${selectedProjectId === summary.id ? 'selected' : ''}`}
+                key={summary.id}
+                onClick={() => setSelectedProjectId(summary.id)}
+                type="button"
+              >
+                <span className="summary-color" style={{backgroundColor: summary.color}} />
+                <strong>{summary.name}</strong>
+                <span>{summary.taskCount} tasks</span>
+                <b>{Math.round(summary.scheduledMinutes / 60)}h scheduled</b>
+                <small>
+                  {Math.round(summary.doneMinutes / 60)}h done / {Math.round(summary.plannedMinutes / 60)}h planned
+                </small>
+              </button>
+            ))}
+          </section>
+
+          <section className="week-status" aria-label="Week and conflicts">
+            <span>
+              Week of <strong>{dateInputValue(weekStart)}</strong>
+            </span>
+            {conflictGroups.length > 0 ? (
+              <div className="conflict-list" role="status">
+                <strong>{conflictGroups.length} conflict{conflictGroups.length === 1 ? '' : 's'}</strong>
+                {conflictGroups.slice(0, 4).map((conflict) => {
+                  const firstTask = tasks.find((task) => task.id === conflict.first.taskId);
+                  const secondTask = tasks.find((task) => task.id === conflict.second.taskId);
+                  return (
+                    <span key={`${conflict.first.id}-${conflict.second.id}`}>
+                      {days[conflict.day]} {formatTime(conflict.second.startMinute)}: {firstTask?.title ?? 'Task'} /{' '}
+                      {secondTask?.title ?? 'Task'}
+                    </span>
+                  );
+                })}
+              </div>
+            ) : (
+              <span className="no-conflicts">No conflicts</span>
+            )}
+          </section>
+
+          {viewMode === 'calendar' ? (
+            <div className="calendar-frame">
+              <FullCalendar
+                allDaySlot={false}
+                dateClick={(arg) => {
+                  if (selectedTask) scheduleTask(selectedTask.id, dayIndexFromDate(arg.date, weekStart), minutesFromDate(arg.date));
+                }}
+                dayHeaderFormat={{weekday: 'short'}}
+                editable
+                eventClassNames={(arg) => [
+                  arg.event.extendedProps.conflict ? 'has-conflict' : '',
+                  arg.event.id === selectedEventId ? 'is-selected' : '',
+                ]}
+                eventClick={(arg) => {
+                  const taskId = String(arg.event.extendedProps.taskId ?? '');
+                  if (taskId) setSelectedTaskId(taskId);
+                  setSelectedEventId(arg.event.id);
+                }}
+                eventContent={(arg) => (
+                  <div className="fc-task-event">
+                    <strong>{arg.event.title}</strong>
+                    <span>
+                      {arg.timeText}
+                      {arg.event.extendedProps.source === 'recurring' ? ' / recurring' : ''}
+                    </span>
+                  </div>
+                )}
+                eventDrop={(arg) => updateEventFromDates(arg.event.id, arg.event.start, arg.event.end)}
+                eventResize={(arg) => updateEventFromDates(arg.event.id, arg.event.start, arg.event.end)}
+                events={calendarEvents}
+                expandRows
+                firstDay={1}
+                headerToolbar={false}
+                height="100%"
+                initialDate={weekStart}
+                initialView="timeGridWeek"
+                key={weekStart.toISOString()}
+                plugins={[timeGridPlugin, interactionPlugin]}
+                slotDuration="00:15:00"
+                slotLabelInterval="01:00:00"
+                slotMaxTime="24:00:00"
+                slotMinTime="00:00:00"
+                snapDuration="00:15:00"
+              />
+            </div>
+          ) : (
+            <div className="gantt-chart" aria-label="Gantt chart">
+              <div className="gantt-row gantt-header">
+                <span>Task</span>
+                {days.map((day) => (
+                  <span key={day}>{day}</span>
+                ))}
+              </div>
+              {filteredTasks.map((task) => {
+                const project = projectById.get(task.projectId);
+                const start = Math.min(task.ganttStartDay, task.ganttEndDay);
+                const end = Math.max(task.ganttStartDay, task.ganttEndDay);
+
+                return (
+                  <button className="gantt-row" key={task.id} onClick={() => setSelectedTaskId(task.id)} type="button">
+                    <span className="gantt-title">
+                      <b>{task.title}</b>
+                      <small>{project?.name}</small>
+                    </span>
+                    <span
+                      className="gantt-bar"
+                      style={{
+                        backgroundColor: project?.color,
+                        gridColumn: `${start + 2} / ${end + 3}`,
+                      }}
+                    >
+                      {days[start]} - {days[end]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
 
-        <section className="task-create-panel" aria-label="新規タスク">
-          <h2>タスク作成</h2>
-          <form onSubmit={createTask} className="stack-form">
-            <input name="title" placeholder="タスク名" required />
-            <textarea name="description" placeholder="説明" rows={3} />
-            <div className="field-grid">
+        <aside className="detail-panel" aria-label="Details">
+          {selectedTask ? (
+            <section className="detail-section">
+              <header>
+                <p className="eyebrow">Task Detail</p>
+                <h2>Edit</h2>
+              </header>
+
               <label>
-                分
-                <input name="duration" type="number" min="15" step="15" defaultValue="60" />
+                Title
+                <input value={selectedTask.title} onChange={(event) => updateTask({...selectedTask, title: event.target.value})} />
               </label>
               <label>
-                プロジェクト
-                <select name="projectId" defaultValue={projects[0]?.id}>
+                Description
+                <textarea
+                  rows={4}
+                  value={selectedTask.description}
+                  onChange={(event) => updateTask({...selectedTask, description: event.target.value})}
+                />
+              </label>
+              <div className="field-grid">
+                <label>
+                  Minutes
+                  <input
+                    min="15"
+                    step="15"
+                    type="number"
+                    value={selectedTask.duration}
+                    onChange={(event) => updateTask({...selectedTask, duration: Number(event.target.value)})}
+                  />
+                </label>
+                <label>
+                  Status
+                  <select
+                    value={selectedTask.status}
+                    onChange={(event) => updateTask({...selectedTask, status: event.target.value as TaskStatus})}
+                  >
+                    {statuses.map((status) => (
+                      <option key={status}>{status}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label>
+                Project
+                <select value={selectedTask.projectId} onChange={(event) => updateTask({...selectedTask, projectId: event.target.value})}>
                   {projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.name}
@@ -415,438 +727,175 @@ export default function App() {
                   ))}
                 </select>
               </label>
-            </div>
-            <input name="tags" placeholder="タグ: paper, seminar" />
-            <div className="field-grid">
               <label>
-                定期
-                <select name="recurrence" defaultValue="none">
-                  {recurrenceOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                曜日
-                <select name="recurrenceDay" defaultValue={0}>
-                  {days.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label>
-              定期開始
-              <select name="recurrenceStartMinute" defaultValue={9 * 60}>
-                {Array.from({length: 24}, (_, hour) => (
-                  <option key={hour} value={hour * 60}>
-                    {formatTime(hour * 60)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="field-grid">
-              <label>
-                Gantt開始
-                <select name="ganttStartDay" defaultValue={0}>
-                  {days.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Gantt終了
-                <select name="ganttEndDay" defaultValue={0}>
-                  {days.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <button type="submit">追加</button>
-          </form>
-        </section>
-
-        <section className="filters" aria-label="検索とフィルタ">
-          <h2>検索・フィルタ</h2>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="タイトル、説明、タグで検索" />
-          <div className="field-grid">
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TaskStatus | 'all')}>
-              <option value="all">全ステータス</option>
-              {statuses.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-            <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
-              <option value="all">全プロジェクト</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
-            <option value="all">全タグ</option>
-            {allTags.map((tag) => (
-              <option key={tag} value={tag}>
-                {tag}
-              </option>
-            ))}
-          </select>
-        </section>
-
-        <section className="kanban" aria-label="タスク一覧">
-          {statuses.map((status) => (
-            <div className="kanban-column" key={status}>
-              <header>
-                <h2>{status}</h2>
-                <span>{filteredTasks.filter((task) => task.status === status).length}</span>
-              </header>
-
-              <div className="task-list">
-                {filteredTasks
-                  .filter((task) => task.status === status)
-                  .map((task) => {
-                    const project = projectById.get(task.projectId);
-
-                    return (
-                      <button
-                        className={`task-card ${selectedTaskId === task.id ? 'selected' : ''}`}
-                        draggable
-                        key={task.id}
-                        onClick={() => setSelectedTaskId(task.id)}
-                        onDragStart={(event) => event.dataTransfer.setData('text/plain', task.id)}
-                        type="button"
-                      >
-                        <span className="project-dot" style={{backgroundColor: project?.color}} />
-                        <strong>{task.title}</strong>
-                        <span>
-                          {task.duration} min / {project?.name ?? 'No project'}
-                        </span>
-                        <div className="tag-row">
-                          {task.tags.map((tag) => (
-                            <small key={tag}>{tag}</small>
-                          ))}
-                        </div>
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-          ))}
-        </section>
-      </aside>
-
-      <section className="workspace">
-        <header className="calendar-toolbar">
-          <div>
-            <p className="eyebrow">v0.4 localStorage</p>
-            <h2>{viewMode === 'calendar' ? '週間カレンダー' : 'ガントチャート'}</h2>
-          </div>
-          <div className="toolbar-actions">
-            <button type="button" onClick={generateRecurringEvents}>
-              定期予定を生成
-            </button>
-            <button type="button" onClick={clearSchedule}>
-              予定をクリア
-            </button>
-          </div>
-        </header>
-
-        <section className="summary-grid" aria-label="プロジェクト集計">
-          {summaries.map((summary) => (
-            <button
-              className={`summary-card ${selectedProjectId === summary.id ? 'selected' : ''}`}
-              key={summary.id}
-              onClick={() => setSelectedProjectId(summary.id)}
-              type="button"
-            >
-              <span className="summary-color" style={{backgroundColor: summary.color}} />
-              <strong>{summary.name}</strong>
-              <span>{summary.taskCount} tasks</span>
-              <b>{Math.round(summary.scheduledMinutes / 60)}h scheduled</b>
-              <small>{Math.round(summary.doneMinutes / 60)}h done / {Math.round(summary.plannedMinutes / 60)}h planned</small>
-            </button>
-          ))}
-        </section>
-
-        {viewMode === 'calendar' ? (
-          <div className="week-calendar">
-            <div className="day-header spacer" />
-            {days.map((day) => (
-              <div className="day-header" key={day}>
-                {day}
-              </div>
-            ))}
-
-            <div className="time-axis">
-              {Array.from({length: 25}, (_, hour) => (
-                <span key={hour}>{formatTime(hour * 60)}</span>
-              ))}
-            </div>
-
-            {days.map((day, dayIndex) => (
-              <div
-                className="day-column"
-                key={day}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => handleDrop(event, dayIndex)}
-              >
-                {Array.from({length: 24}, (_, hour) => (
-                  <div className="hour-line" key={hour} />
-                ))}
-
-                {eventsByDay[dayIndex].map((calendarEvent) => {
-                  const task = tasks.find((item) => item.id === calendarEvent.taskId);
-                  if (!task) return null;
-                  const project = projectById.get(task.projectId);
-
-                  return (
-                    <button
-                      className={`calendar-event ${calendarEvent.source}`}
-                      key={calendarEvent.id}
-                      onClick={() => setSelectedTaskId(task.id)}
-                      style={{
-                        borderColor: project?.color,
-                        height: `${Math.max(34, ((calendarEvent.endMinute - calendarEvent.startMinute) / 60) * hourHeight - 4)}px`,
-                        top: `${(calendarEvent.startMinute / 60) * hourHeight + 2}px`,
-                      }}
-                      type="button"
-                    >
-                      <strong>{task.title}</strong>
-                      <span>
-                        {formatTime(calendarEvent.startMinute)} - {formatTime(calendarEvent.endMinute)}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="gantt-chart" aria-label="ガントチャート">
-            <div className="gantt-row gantt-header">
-              <span>Task</span>
-              {days.map((day) => (
-                <span key={day}>{day}</span>
-              ))}
-            </div>
-            {filteredTasks.map((task) => {
-              const project = projectById.get(task.projectId);
-              const start = Math.min(task.ganttStartDay, task.ganttEndDay);
-              const end = Math.max(task.ganttStartDay, task.ganttEndDay);
-
-              return (
-                <button className="gantt-row" key={task.id} onClick={() => setSelectedTaskId(task.id)} type="button">
-                  <span className="gantt-title">
-                    <b>{task.title}</b>
-                    <small>{project?.name}</small>
-                  </span>
-                  <span
-                    className="gantt-bar"
-                    style={{
-                      backgroundColor: project?.color,
-                      gridColumn: `${start + 2} / ${end + 3}`,
-                    }}
-                  >
-                    {days[start]} - {days[end]}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <aside className="detail-panel" aria-label="詳細編集">
-        {selectedTask ? (
-          <section className="detail-section">
-            <header>
-              <p className="eyebrow">Task Detail</p>
-              <h2>編集</h2>
-            </header>
-
-            <label>
-              タイトル
-              <input value={selectedTask.title} onChange={(event) => updateTask({...selectedTask, title: event.target.value})} />
-            </label>
-            <label>
-              説明
-              <textarea
-                rows={4}
-                value={selectedTask.description}
-                onChange={(event) => updateTask({...selectedTask, description: event.target.value})}
-              />
-            </label>
-            <div className="field-grid">
-              <label>
-                所要時間
+                Tags
                 <input
-                  min="15"
-                  step="15"
-                  type="number"
-                  value={selectedTask.duration}
-                  onChange={(event) => updateTask({...selectedTask, duration: Number(event.target.value)})}
+                  value={selectedTask.tags.join(', ')}
+                  onChange={(event) => updateTask({...selectedTask, tags: parseTags(event.target.value)})}
                 />
               </label>
+              <div className="field-grid">
+                <label>
+                  Recurrence
+                  <select
+                    value={selectedTask.recurrence}
+                    onChange={(event) => updateTask({...selectedTask, recurrence: event.target.value as Recurrence})}
+                  >
+                    {recurrenceOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Day
+                  <select
+                    value={selectedTask.recurrenceDay}
+                    onChange={(event) => updateTask({...selectedTask, recurrenceDay: Number(event.target.value)})}
+                  >
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <label>
-                状態
+                Recurrence time
                 <select
-                  value={selectedTask.status}
-                  onChange={(event) => updateTask({...selectedTask, status: event.target.value as TaskStatus})}
+                  value={selectedTask.recurrenceStartMinute}
+                  onChange={(event) => updateTask({...selectedTask, recurrenceStartMinute: Number(event.target.value)})}
                 >
-                  {statuses.map((status) => (
-                    <option key={status}>{status}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label>
-              プロジェクト
-              <select value={selectedTask.projectId} onChange={(event) => updateTask({...selectedTask, projectId: event.target.value})}>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              タグ
-              <input
-                value={selectedTask.tags.join(', ')}
-                onChange={(event) => updateTask({...selectedTask, tags: parseTags(event.target.value)})}
-              />
-            </label>
-            <div className="field-grid">
-              <label>
-                定期
-                <select
-                  value={selectedTask.recurrence}
-                  onChange={(event) => updateTask({...selectedTask, recurrence: event.target.value as Recurrence})}
-                >
-                  {recurrenceOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
+                  {Array.from({length: 24}, (_, hour) => (
+                    <option key={hour} value={hour * 60}>
+                      {formatTime(hour * 60)}
                     </option>
                   ))}
                 </select>
               </label>
-              <label>
-                曜日
-                <select
-                  value={selectedTask.recurrenceDay}
-                  onChange={(event) => updateTask({...selectedTask, recurrenceDay: Number(event.target.value)})}
-                >
-                  {days.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label>
-              定期開始
-              <select
-                value={selectedTask.recurrenceStartMinute}
-                onChange={(event) => updateTask({...selectedTask, recurrenceStartMinute: Number(event.target.value)})}
+              <div className="field-grid">
+                <label>
+                  Gantt start
+                  <select
+                    value={selectedTask.ganttStartDay}
+                    onChange={(event) => updateTask({...selectedTask, ganttStartDay: Number(event.target.value)})}
+                  >
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Gantt end
+                  <select
+                    value={selectedTask.ganttEndDay}
+                    onChange={(event) => updateTask({...selectedTask, ganttEndDay: Number(event.target.value)})}
+                  >
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {selectedEvent && selectedEvent.taskId === selectedTask.id && (
+                <div className={`event-detail ${conflictingEventIds.has(selectedEvent.id) ? 'warning' : ''}`}>
+                  <p className="eyebrow">Selected Event</p>
+                  <strong>
+                    {days[selectedEvent.day]} {formatTime(selectedEvent.startMinute)} - {formatTime(selectedEvent.endMinute)}
+                  </strong>
+                  <span>{selectedEvent.source === 'recurring' ? 'Recurring event' : 'Manual event'}</span>
+                  {conflictingEventIds.has(selectedEvent.id) && <span>This event overlaps another event.</span>}
+                  <button
+                    className="danger"
+                    onClick={() => {
+                      deleteEvent(selectedEvent.id);
+                      setSelectedEventId('');
+                    }}
+                    type="button"
+                  >
+                    Delete Event
+                  </button>
+                </div>
+              )}
+
+              <button
+                className="danger"
+                type="button"
+                onClick={() => {
+                  deleteTask(selectedTask.id);
+                  setSelectedEventId('');
+                }}
               >
-                {Array.from({length: 24}, (_, hour) => (
-                  <option key={hour} value={hour * 60}>
-                    {formatTime(hour * 60)}
+                Delete
+              </button>
+            </section>
+          ) : (
+            <p className="muted">Select a task to edit it.</p>
+          )}
+
+          <section className="project-editor" aria-label="Project management">
+            <header>
+              <p className="eyebrow">Projects</p>
+              <h2>Manage</h2>
+            </header>
+            <form onSubmit={handleCreateProject} className="stack-form">
+              <input name="name" placeholder="New project name" />
+              <input name="goal" placeholder="Goal or note" />
+              <select name="color" defaultValue={projectColors[0]}>
+                {projectColors.map((color) => (
+                  <option key={color} value={color}>
+                    {color}
                   </option>
                 ))}
               </select>
-            </label>
-            <div className="field-grid">
-              <label>
-                Gantt開始
-                <select value={selectedTask.ganttStartDay} onChange={(event) => updateTask({...selectedTask, ganttStartDay: Number(event.target.value)})}>
-                  {days.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Gantt終了
-                <select value={selectedTask.ganttEndDay} onChange={(event) => updateTask({...selectedTask, ganttEndDay: Number(event.target.value)})}>
-                  {days.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+              <button type="submit">Add Project</button>
+            </form>
 
-            <button className="danger" type="button" onClick={() => deleteTask(selectedTask.id)}>
-              削除
-            </button>
+            {selectedProject && (
+              <div className="selected-project">
+                <label>
+                  Name
+                  <input value={selectedProject.name} onChange={(event) => updateProject({...selectedProject, name: event.target.value})} />
+                </label>
+                <label>
+                  Goal
+                  <textarea
+                    rows={3}
+                    value={selectedProject.goal}
+                    onChange={(event) => updateProject({...selectedProject, goal: event.target.value})}
+                  />
+                </label>
+                <label>
+                  Color
+                  <select value={selectedProject.color} onChange={(event) => updateProject({...selectedProject, color: event.target.value})}>
+                    {projectColors.map((color) => (
+                      <option key={color} value={color}>
+                        {color}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
           </section>
-        ) : (
-          <p className="muted">タスクを選択してください。</p>
-        )}
+        </aside>
+      </main>
 
-        <section className="project-editor" aria-label="プロジェクト管理">
-          <header>
-            <p className="eyebrow">Projects</p>
-            <h2>管理</h2>
-          </header>
-          <form onSubmit={createProject} className="stack-form">
-            <input name="name" placeholder="新規プロジェクト名" />
-            <input name="goal" placeholder="目的・メモ" />
-            <select name="color" defaultValue={projectColors[0]}>
-              {projectColors.map((color) => (
-                <option key={color} value={color}>
-                  {color}
-                </option>
-              ))}
-            </select>
-            <button type="submit">プロジェクト追加</button>
-          </form>
-
-          {selectedProject && (
-            <div className="selected-project">
-              <label>
-                名前
-                <input value={selectedProject.name} onChange={(event) => updateProject({...selectedProject, name: event.target.value})} />
-              </label>
-              <label>
-                目的
-                <textarea
-                  rows={3}
-                  value={selectedProject.goal}
-                  onChange={(event) => updateProject({...selectedProject, goal: event.target.value})}
-                />
-              </label>
-              <label>
-                色
-                <select value={selectedProject.color} onChange={(event) => updateProject({...selectedProject, color: event.target.value})}>
-                  {projectColors.map((color) => (
-                    <option key={color} value={color}>
-                      {color}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          )}
-        </section>
-      </aside>
-    </main>
+      <DragOverlay>
+        {activeTask ? (
+          <div className="task-card drag-overlay">
+            <strong>{activeTask.title}</strong>
+            <span>{activeTask.duration} min</span>
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
