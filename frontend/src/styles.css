@@ -311,6 +311,7 @@ button:disabled {
 .task-card {
   background: #ffffff;
   border: 1px solid #cfd9e5;
+  border-radius: 8px;
   color: #1b2430;
   display: grid;
   gap: 6px;
@@ -319,6 +320,26 @@ button:disabled {
   position: relative;
   text-align: left;
   touch-action: none;
+}
+
+.task-card-title {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr auto;
+}
+
+.task-delete-button {
+  background: #fff7f7;
+  border-color: #e2b5b5;
+  color: #ad2f2f;
+  font-size: 13px;
+  min-height: 28px;
+  padding: 3px 8px;
+}
+
+.task-delete-button:hover {
+  background: #fff1f1;
 }
 
 .task-card:hover,
@@ -657,6 +678,28 @@ button:disabled {
   border-radius: 8px;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.gantt-controls {
+  align-items: center;
+  background: #fbfcfe;
+  border-bottom: 1px solid #e8edf3;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 864px;
+  padding: 10px;
+}
+
+.gantt-controls label {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+.gantt-controls select {
+  min-height: 36px;
+  min-width: 180px;
 }
 
 .gantt-row {

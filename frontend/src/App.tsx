@@ -23,13 +23,14 @@ import {
 type ViewMode = 'calendar' | 'gantt';
 type FilterValue = TaskStatus | 'all';
 type ModalMode = 'createTask' | 'taskDetail' | 'projects' | null;
+type GanttSortMode = 'project' | 'time';
 
 const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'None', value: 'none'},
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.8';
+const APP_VERSION = 'v1.3.9';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -136,11 +137,13 @@ function createProjectFromForm(formData: FormData): Project {
 }
 
 function DraggableTaskCard({
+  onDelete,
   project,
   selected,
   task,
   onSelect,
 }: {
+  onDelete: () => void;
   project?: Project;
   selected: boolean;
   task: Task;
@@ -152,19 +155,36 @@ function DraggableTaskCard({
   });
 
   return (
-    <button
+    <div
       className={`task-card ${selected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') onSelect();
+      }}
       ref={setNodeRef}
       style={{
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
       }}
-      type="button"
       {...listeners}
       {...attributes}
     >
       <span className="project-dot" style={{backgroundColor: project?.color}} />
-      <strong>{task.title}</strong>
+      <div className="task-card-title">
+        <strong>{task.title}</strong>
+        <button
+          aria-label={`Delete ${task.title}`}
+          className="task-delete-button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onDelete();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          type="button"
+        >
+          x
+        </button>
+      </div>
       <span>
         {task.duration} min / {project?.name ?? 'No project'}
       </span>
@@ -173,7 +193,7 @@ function DraggableTaskCard({
           <small key={tag}>{tag}</small>
         ))}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -205,6 +225,7 @@ export default function App() {
   const [weekStart, setWeekStartState] = useState(getInitialWeekStart);
   const [selectedDayIndex, setSelectedDayIndex] = useState(getInitialDayIndex);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
+  const [ganttSortMode, setGanttSortMode] = useState<GanttSortMode>('project');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -338,8 +359,25 @@ export default function App() {
         const lastEndMinute = Math.max(...taskEvents.filter((event) => event.day === end).map((event) => event.endMinute));
         return {task, start, end, firstStartMinute, lastEndMinute};
       })
-      .filter((row): row is NonNullable<typeof row> => row !== null);
-  }, [filteredTasks, scheduledEvents]);
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => {
+        const timeSort = a.start - b.start || a.firstStartMinute - b.firstStartMinute || a.end - b.end || a.lastEndMinute - b.lastEndMinute;
+        if (ganttSortMode === 'time') return timeSort || a.task.title.localeCompare(b.task.title);
+
+        const aProject = projectById.get(a.task.projectId)?.name ?? '';
+        const bProject = projectById.get(b.task.projectId)?.name ?? '';
+        return aProject.localeCompare(bProject) || timeSort || a.task.title.localeCompare(b.task.title);
+      });
+  }, [filteredTasks, ganttSortMode, projectById, scheduledEvents]);
+
+  function removeTask(taskId: string) {
+    deleteTask(taskId);
+    if (selectedTaskId === taskId) {
+      const nextTask = tasks.find((task) => task.id !== taskId);
+      setSelectedTaskId(nextTask?.id ?? '');
+    }
+    if (selectedEvent?.taskId === taskId) setSelectedEventId('');
+  }
 
   function scheduleTask(taskId: string, day: number, minute: number, source: CalendarEvent['source'] = 'manual', reflectDay = false) {
     const task = tasks.find((item) => item.id === taskId);
@@ -571,6 +609,7 @@ export default function App() {
                     .map((task) => (
                       <DraggableTaskCard
                         key={task.id}
+                        onDelete={() => removeTask(task.id)}
                         onSelect={() => setSelectedTaskId(task.id)}
                         project={projectById.get(task.projectId)}
                         selected={selectedTaskId === task.id}
@@ -696,6 +735,15 @@ export default function App() {
             </div>
           ) : (
             <div className="gantt-chart" aria-label="Gantt chart">
+              <div className="gantt-controls">
+                <label>
+                  Sort
+                  <select value={ganttSortMode} onChange={(event) => setGanttSortMode(event.target.value as GanttSortMode)}>
+                    <option value="project">Project, then time</option>
+                    <option value="time">Time</option>
+                  </select>
+                </label>
+              </div>
               <div className="gantt-row gantt-header">
                 <span>Task</span>
                 {days.map((day, index) => (
@@ -885,8 +933,7 @@ export default function App() {
                 className="danger"
                 type="button"
                 onClick={() => {
-                  deleteTask(selectedTask.id);
-                  setSelectedEventId('');
+                  removeTask(selectedTask.id);
                 }}
               >
                 Delete
@@ -1212,8 +1259,7 @@ export default function App() {
                     className="danger"
                     type="button"
                     onClick={() => {
-                      deleteTask(selectedTask.id);
-                      setSelectedEventId('');
+                      removeTask(selectedTask.id);
                       setModalMode(null);
                     }}
                   >
