@@ -183,18 +183,23 @@ function normalizeTask(raw: Partial<Task>, projectId: string): Task {
 
 function normalizeData(raw: Partial<PlannerData>): PlannerData {
   const projects = raw.projects?.length ? raw.projects : defaultProjects;
+  const tasks = (raw.tasks ?? []).map((task) => normalizeTask(task, projects[0].id));
+  const taskIds = new Set(tasks.map((task) => task.id));
+
   return {
     projects,
-    tasks: (raw.tasks ?? []).map((task) => normalizeTask(task, projects[0].id)),
-    events: (raw.events ?? []).map((event) => ({
-      id: event.id ?? crypto.randomUUID(),
-      taskId: event.taskId ?? '',
-      weekStart: event.weekStart ?? '',
-      day: Number(event.day) || 0,
-      startMinute: Number(event.startMinute) || 9 * 60,
-      endMinute: Number(event.endMinute) || 10 * 60,
-      source: event.source === 'recurring' ? 'recurring' : 'manual',
-    })),
+    tasks,
+    events: (raw.events ?? [])
+      .map((event) => ({
+        id: event.id ?? crypto.randomUUID(),
+        taskId: event.taskId ?? '',
+        weekStart: event.weekStart ?? '',
+        day: Number(event.day) || 0,
+        startMinute: Number(event.startMinute) || 9 * 60,
+        endMinute: Number(event.endMinute) || 10 * 60,
+        source: (event.source === 'recurring' ? 'recurring' : 'manual') as EventSource,
+      }))
+      .filter((event) => taskIds.has(event.taskId)),
   };
 }
 
@@ -203,16 +208,29 @@ export function normalizePlannerData(raw: Partial<PlannerData>): PlannerData {
 }
 
 function loadData(): PlannerData {
-  const keys = [STORAGE_KEY, ...LEGACY_KEYS];
-
-  for (const key of keys) {
-    const saved = localStorage.getItem(key);
-    if (!saved) continue;
-
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
     try {
       const data = normalizeData(JSON.parse(saved) as Partial<PlannerData>);
-      return data.tasks.length ? data : initialData;
+      persist(data);
+      LEGACY_KEYS.forEach((key) => localStorage.removeItem(key));
+      return data;
     } catch {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }
+
+  for (const key of LEGACY_KEYS) {
+    const legacySaved = localStorage.getItem(key);
+    if (!legacySaved) continue;
+
+    try {
+      const data = normalizeData(JSON.parse(legacySaved) as Partial<PlannerData>);
+      persist(data);
+      LEGACY_KEYS.forEach((legacyKey) => localStorage.removeItem(legacyKey));
+      return data;
+    } catch {
+      localStorage.removeItem(key);
       continue;
     }
   }
