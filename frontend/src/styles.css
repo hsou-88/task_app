@@ -13,7 +13,10 @@
 
 body {
   margin: 0;
-  overscroll-behavior: none;
+  min-width: 320px;
+  overflow-x: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 button,
@@ -371,7 +374,8 @@ button:hover {
   border-radius: 8px;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .fc {
@@ -535,6 +539,7 @@ button:hover {
   border: 1px solid #d9e1ea;
   border-radius: 8px;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .gantt-row {
@@ -637,14 +642,8 @@ button:hover {
 
 @media (max-width: 1240px) {
   .planner-shell {
-    grid-template-columns: 330px minmax(620px, 1fr);
-  }
-}
-
-@media (max-width: 900px) {
-  .planner-shell {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(72vh, auto) auto;
+    grid-template-rows: auto auto auto;
     height: auto;
     min-height: 100dvh;
     overflow: visible;
@@ -659,7 +658,6 @@ button:hover {
 
   .workspace {
     min-height: 72vh;
-    padding: 12px;
     overflow: visible;
   }
 
@@ -667,6 +665,28 @@ button:hover {
     border-left: 0;
     border-top: 1px solid #d9e1ea;
     overflow: visible;
+  }
+
+  .calendar-frame {
+    min-height: 720px;
+  }
+
+  .fc {
+    min-width: 760px;
+  }
+
+  .gantt-row {
+    min-width: 754px;
+  }
+}
+
+@media (max-width: 900px) {
+  .planner-shell {
+    grid-template-rows: auto minmax(72vh, auto) auto;
+  }
+
+  .workspace {
+    padding: 12px;
   }
 
   .summary-grid {

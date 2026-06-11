@@ -27,6 +27,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
+const APP_VERSION = 'v1.3.2';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -362,7 +363,7 @@ export default function App() {
       <main className="planner-shell">
         <aside className="sidebar">
           <section className="brand-panel">
-            <p className="eyebrow">Research Planner</p>
+            <p className="eyebrow">Research Planner {APP_VERSION}</p>
             <h1>Week Blocking</h1>
             <div className="view-switch" role="tablist" aria-label="View mode">
               <button className={viewMode === 'calendar' ? 'active' : ''} onClick={() => setViewMode('calendar')} type="button">
@@ -514,7 +515,7 @@ export default function App() {
         <section className="workspace">
           <header className="calendar-toolbar">
             <div>
-              <p className="eyebrow">FullCalendar / dnd-kit / Zustand / PWA</p>
+              <p className="eyebrow">FullCalendar / dnd-kit / Zustand / PWA / {APP_VERSION}</p>
               <h2>{viewMode === 'calendar' ? 'Weekly Calendar' : 'Gantt Chart'}</h2>
             </div>
             <div className="toolbar-actions">
