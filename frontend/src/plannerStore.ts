@@ -47,6 +47,7 @@ type PlannerStore = PlannerData & {
   deleteTask: (taskId: string) => void;
   addProject: (project: Project) => void;
   updateProject: (project: Project) => void;
+  deleteProject: (projectId: string) => void;
   addEvent: (event: CalendarEvent) => void;
   updateEvent: (event: CalendarEvent) => void;
   deleteEvent: (eventId: string) => void;
@@ -217,6 +218,18 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
   addProject: (project) => set((state) => withPersist(state, {projects: [...state.projects, project]})),
   updateProject: (project) =>
     set((state) => withPersist(state, {projects: state.projects.map((item) => (item.id === project.id ? project : item))})),
+  deleteProject: (projectId) =>
+    set((state) => {
+      if (state.projects.length <= 1) return state;
+
+      const fallbackProject = state.projects.find((project) => project.id !== projectId);
+      if (!fallbackProject) return state;
+
+      return withPersist(state, {
+        projects: state.projects.filter((project) => project.id !== projectId),
+        tasks: state.tasks.map((task) => (task.projectId === projectId ? {...task, projectId: fallbackProject.id} : task)),
+      });
+    }),
   addEvent: (event) =>
     set((state) => {
       const task = state.tasks.find((item) => item.id === event.taskId);

@@ -1,7 +1,7 @@
 import FullCalendar from '@fullcalendar/react';
 import interactionPlugin from '@fullcalendar/interaction';
 import timeGridPlugin from '@fullcalendar/timegrid';
-import {DndContext, DragEndEvent, DragOverlay, useDraggable} from '@dnd-kit/core';
+import {DndContext, DragEndEvent, DragOverlay, KeyboardSensor, PointerSensor, useDraggable, useSensor, useSensors} from '@dnd-kit/core';
 import {FormEvent, useMemo, useRef, useState} from 'react';
 import {
   CalendarEvent,
@@ -27,7 +27,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.2';
+const APP_VERSION = 'v1.3.3';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -157,6 +157,7 @@ export default function App() {
   const deleteTask = usePlannerStore((state) => state.deleteTask);
   const addProject = usePlannerStore((state) => state.addProject);
   const updateProject = usePlannerStore((state) => state.updateProject);
+  const deleteProject = usePlannerStore((state) => state.deleteProject);
   const addEvent = usePlannerStore((state) => state.addEvent);
   const updateEvent = usePlannerStore((state) => state.updateEvent);
   const deleteEvent = usePlannerStore((state) => state.deleteEvent);
@@ -175,6 +176,14 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [weekStart, setWeekStartState] = useState(getInitialWeekStart);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor),
+  );
 
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
@@ -345,9 +354,11 @@ export default function App() {
     const rect = event.active.rect.current.translated;
     if (!rect) return;
 
-    const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    const dateElement = target?.closest('[data-date]');
-    const timeElement = target?.closest('[data-time]');
+    const dropX = rect.left + rect.width / 2;
+    const dropY = rect.top + rect.height / 2;
+    const elements = document.elementsFromPoint(dropX, dropY);
+    const dateElement = elements.find((element) => element.closest('[data-date]'))?.closest('[data-date]');
+    const timeElement = elements.find((element) => element.closest('[data-time]'))?.closest('[data-time]');
     const dateValue = dateElement?.getAttribute('data-date');
     const timeValue = timeElement?.getAttribute('data-time');
     if (!dateValue || !timeValue) return;
@@ -359,7 +370,7 @@ export default function App() {
   const activeTask = activeTaskId ? tasks.find((task) => task.id === activeTaskId) : null;
 
   return (
-    <DndContext onDragEnd={handleTaskDragEnd} onDragStart={(event) => setActiveTaskId(String(event.active.id))}>
+    <DndContext sensors={sensors} onDragEnd={handleTaskDragEnd} onDragStart={(event) => setActiveTaskId(String(event.active.id))}>
       <main className="planner-shell">
         <aside className="sidebar">
           <section className="brand-panel">
@@ -883,6 +894,19 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+                <button
+                  className="danger"
+                  disabled={projects.length <= 1}
+                  type="button"
+                  onClick={() => {
+                    const fallbackProject = projects.find((project) => project.id !== selectedProject.id);
+                    deleteProject(selectedProject.id);
+                    setSelectedProjectId(fallbackProject?.id ?? '');
+                    if (projectFilter === selectedProject.id) setProjectFilter('all');
+                  }}
+                >
+                  Delete Project
+                </button>
               </div>
             )}
           </section>
