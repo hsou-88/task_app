@@ -83,7 +83,7 @@ Setup:
 
 1. Push this project to a GitHub repository.
 2. In GitHub, open `Settings` > `Pages`.
-3. Set `Source` to `GitHub Actions`.
+3. Under `Build and deployment`, set `Source` to `GitHub Actions`.
 4. Push to the `main` branch, or run the workflow manually from the `Actions` tab.
 
 The app will be published at a URL like:
@@ -93,6 +93,18 @@ https://<github-user>.github.io/<repository-name>/
 ```
 
 The app uses `localStorage`, so data is stored per browser/device. GitHub Pages makes the planner reachable outside your Wi-Fi, but it does not sync data between devices. Use `Export` and `Import` for manual backup or moving data between devices.
+
+If a GitHub Pages log says `GitHub Pages: jekyll` and renders files under `frontend/node_modules`, the repository is still using `Deploy from a branch` instead of `GitHub Actions`. Switch the Pages source to `GitHub Actions`.
+
+If `frontend/node_modules` has already been committed to GitHub, remove it from the repository index:
+
+```bash
+git rm -r --cached frontend/node_modules
+git commit -m "Remove generated node_modules"
+git push
+```
+
+Then run the Pages workflow again. The deployed site should be built from `frontend/dist`, not from the repository root.
 
 ## Build Check
 
