@@ -106,6 +106,14 @@ git push
 
 Then run the Pages workflow again. The deployed site should be built from `frontend/dist`, not from the repository root.
 
+If the page is blank, open the page source and check the script path. It must look like this:
+
+```html
+<script type="module" crossorigin src="/task_app/assets/...js"></script>
+```
+
+If it instead says `/assets/...js`, GitHub is serving an old build. Re-run `Deploy Research Planner to GitHub Pages` after pushing the latest workflow.
+
 ## Build Check
 
 ```bash
