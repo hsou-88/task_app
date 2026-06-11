@@ -29,7 +29,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.7';
+const APP_VERSION = 'v1.3.8';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -84,9 +84,28 @@ function dateInputValue(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function isDateInRange(date: Date, startDate: string, endDate: string) {
+  const dateValue = dateInputValue(date);
+  const startsAfterStart = !startDate || dateValue >= startDate;
+  const endsBeforeEnd = !endDate || dateValue <= endDate;
+  return startsAfterStart && endsBeforeEnd;
+}
+
+function getTaskRecurrenceDays(task: Task) {
+  if (task.recurrence === 'daily') return days.map((_, dayIndex) => dayIndex);
+  if (task.recurrence !== 'weekly') return [];
+  if (task.recurrenceDays.length > 0) return task.recurrenceDays;
+  return task.recurrenceDay === NO_RECURRENCE_DAY ? [] : [task.recurrenceDay];
+}
+
 function createTaskFromForm(formData: FormData, fallbackProjectId: string): Task {
   const duration = Number(formData.get('duration') ?? 60);
   const ganttStartDay = Number(formData.get('ganttStartDay') ?? 0);
+  const recurrenceDays = formData
+    .getAll('recurrenceDays')
+    .map(Number)
+    .filter((day) => Number.isInteger(day) && day >= 0 && day < days.length);
+  const recurrenceDay = Number(formData.get('recurrenceDay') ?? NO_RECURRENCE_DAY);
 
   return {
     id: crypto.randomUUID(),
@@ -97,10 +116,13 @@ function createTaskFromForm(formData: FormData, fallbackProjectId: string): Task
     projectId: String(formData.get('projectId') ?? fallbackProjectId),
     tags: parseTags(formData.get('tags')),
     recurrence: String(formData.get('recurrence') ?? 'none') as Recurrence,
-    recurrenceDay: Number(formData.get('recurrenceDay') ?? NO_RECURRENCE_DAY),
+    recurrenceDay: recurrenceDays[0] ?? recurrenceDay,
+    recurrenceDays,
     recurrenceStartMinute: Number(formData.get('recurrenceStartMinute') ?? 9 * 60),
     ganttStartDay,
     ganttEndDay: Math.max(ganttStartDay, Number(formData.get('ganttEndDay') ?? ganttStartDay)),
+    ganttStartDate: String(formData.get('ganttStartDate') ?? ''),
+    ganttEndDate: String(formData.get('ganttEndDate') ?? ''),
   };
 }
 
@@ -218,36 +240,34 @@ export default function App() {
     const recurringEvents = tasks.flatMap((task) => {
       if (task.recurrence === 'none') return [];
 
-      const targetDays =
-        task.recurrence === 'daily'
-          ? days.map((_, dayIndex) => dayIndex)
-          : task.recurrenceDay === NO_RECURRENCE_DAY
-            ? []
-            : [task.recurrenceDay];
+      const targetDays = getTaskRecurrenceDays(task);
       const startMinute = snapToQuarterHour(task.recurrenceStartMinute);
 
-      return targetDays.map((day) => ({
-        id: `recurring-${weekKey}-${task.id}-${day}`,
-        taskId: task.id,
-        weekStart: weekKey,
-        day,
-        startMinute,
-        endMinute: Math.min(24 * 60, startMinute + task.duration),
-        source: 'recurring' as const,
-      }));
+      return targetDays
+        .filter((day) => isDateInRange(addDays(weekStart, day), task.ganttStartDate, task.ganttEndDate))
+        .map((day) => ({
+          id: `recurring-${weekKey}-${task.id}-${day}`,
+          taskId: task.id,
+          weekStart: weekKey,
+          day,
+          startMinute,
+          endMinute: Math.min(24 * 60, startMinute + task.duration),
+          source: 'recurring' as const,
+        }));
     });
 
     return [...manualEvents, ...recurringEvents];
-  }, [events, tasks, weekKey]);
+  }, [events, tasks, weekKey, weekStart]);
   const selectedEvent = scheduledEvents.find((event) => event.id === selectedEventId) ?? null;
   const selectedEventTask = selectedEvent ? tasks.find((task) => task.id === selectedEvent.taskId) ?? null : null;
   const selectedDayTaskIds = useMemo(
     () => new Set(scheduledEvents.filter((event) => event.day === selectedDayIndex).map((event) => event.taskId)),
     [scheduledEvents, selectedDayIndex],
   );
+  const scheduledTaskIds = useMemo(() => new Set(scheduledEvents.map((event) => event.taskId)), [scheduledEvents]);
   const selectedDayTasks = useMemo(
-    () => filteredTasks.filter((task) => selectedDayTaskIds.has(task.id)),
-    [filteredTasks, selectedDayTaskIds],
+    () => filteredTasks.filter((task) => selectedDayTaskIds.has(task.id) || !scheduledTaskIds.has(task.id)),
+    [filteredTasks, scheduledTaskIds, selectedDayTaskIds],
   );
   const conflictGroups = useMemo(() => {
     const conflicts: {day: number; first: CalendarEvent; second: CalendarEvent}[] = [];
@@ -307,6 +327,19 @@ export default function App() {
       }),
     [projects, scheduledEvents, tasks],
   );
+  const ganttRows = useMemo(() => {
+    return filteredTasks
+      .map((task) => {
+        const taskEvents = scheduledEvents.filter((event) => event.taskId === task.id);
+        if (taskEvents.length === 0) return null;
+        const start = Math.min(...taskEvents.map((event) => event.day));
+        const end = Math.max(...taskEvents.map((event) => event.day));
+        const firstStartMinute = Math.min(...taskEvents.filter((event) => event.day === start).map((event) => event.startMinute));
+        const lastEndMinute = Math.max(...taskEvents.filter((event) => event.day === end).map((event) => event.endMinute));
+        return {task, start, end, firstStartMinute, lastEndMinute};
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+  }, [filteredTasks, scheduledEvents]);
 
   function scheduleTask(taskId: string, day: number, minute: number, source: CalendarEvent['source'] = 'manual', reflectDay = false) {
     const task = tasks.find((item) => item.id === taskId);
@@ -315,9 +348,12 @@ export default function App() {
     const startMinute = snapToQuarterHour(minute);
     setSelectedDayIndex(day);
     if (task.recurrence !== 'none') {
+      const nextRecurrenceDays =
+        task.recurrence === 'weekly' ? Array.from(new Set([...getTaskRecurrenceDays(task), day])).sort((a, b) => a - b) : task.recurrenceDays;
       updateTask({
         ...task,
-        recurrenceDay: task.recurrence === 'weekly' ? day : task.recurrenceDay,
+        recurrenceDay: task.recurrence === 'weekly' ? (nextRecurrenceDays[0] ?? NO_RECURRENCE_DAY) : task.recurrenceDay,
+        recurrenceDays: nextRecurrenceDays,
         recurrenceStartMinute: startMinute,
       });
       return;
@@ -334,7 +370,7 @@ export default function App() {
     });
 
     if (reflectDay && task.recurrenceDay !== day) {
-      updateTask({...task, recurrenceDay: day});
+      updateTask({...task, recurrenceDay: day, recurrenceDays: [day]});
     }
   }
 
@@ -372,10 +408,15 @@ export default function App() {
     if (current.source === 'recurring') {
       const task = tasks.find((item) => item.id === current.taskId);
       if (!task) return;
+      const nextRecurrenceDays =
+        task.recurrence === 'weekly'
+          ? Array.from(new Set(getTaskRecurrenceDays(task).map((item) => (item === current.day ? day : item)))).sort((a, b) => a - b)
+          : task.recurrenceDays;
 
       updateTask({
         ...task,
-        recurrenceDay: task.recurrence === 'weekly' ? day : task.recurrenceDay,
+        recurrenceDay: task.recurrence === 'weekly' ? (nextRecurrenceDays[0] ?? NO_RECURRENCE_DAY) : task.recurrenceDay,
+        recurrenceDays: nextRecurrenceDays,
         recurrenceStartMinute: startMinute,
         duration: endMinute - startMinute,
       });
@@ -451,7 +492,17 @@ export default function App() {
     if (!selectedEvent || !selectedEventTask) return;
 
     if (selectedEvent.source === 'recurring') {
-      updateTask({...selectedEventTask, recurrence: 'none', recurrenceDay: NO_RECURRENCE_DAY});
+      if (selectedEventTask.recurrence === 'weekly') {
+        const nextRecurrenceDays = getTaskRecurrenceDays(selectedEventTask).filter((day) => day !== selectedEvent.day);
+        updateTask({
+          ...selectedEventTask,
+          recurrence: nextRecurrenceDays.length > 0 ? 'weekly' : 'none',
+          recurrenceDay: nextRecurrenceDays[0] ?? NO_RECURRENCE_DAY,
+          recurrenceDays: nextRecurrenceDays,
+        });
+      } else {
+        updateTask({...selectedEventTask, recurrence: 'none', recurrenceDay: NO_RECURRENCE_DAY, recurrenceDays: []});
+      }
     } else {
       deleteEvent(selectedEvent.id);
     }
@@ -647,14 +698,15 @@ export default function App() {
             <div className="gantt-chart" aria-label="Gantt chart">
               <div className="gantt-row gantt-header">
                 <span>Task</span>
-                {days.map((day) => (
-                  <span key={day}>{day}</span>
+                {days.map((day, index) => (
+                  <span key={day}>
+                    {day}
+                    <small>{dateInputValue(addDays(weekStart, index)).slice(5)}</small>
+                  </span>
                 ))}
               </div>
-              {filteredTasks.map((task) => {
+              {ganttRows.map(({task, start, end, firstStartMinute, lastEndMinute}) => {
                 const project = projectById.get(task.projectId);
-                const start = Math.min(task.ganttStartDay, task.ganttEndDay);
-                const end = Math.max(task.ganttStartDay, task.ganttEndDay);
 
                 return (
                   <button className="gantt-row" key={task.id} onClick={() => setSelectedTaskId(task.id)} type="button">
@@ -669,11 +721,13 @@ export default function App() {
                         gridColumn: `${start + 2} / ${end + 3}`,
                       }}
                     >
-                      {days[start]} - {days[end]}
+                      {dateInputValue(addDays(weekStart, start)).slice(5)} {formatTime(firstStartMinute)} -{' '}
+                      {dateInputValue(addDays(weekStart, end)).slice(5)} {formatTime(lastEndMinute)}
                     </span>
                   </button>
                 );
               })}
+              {ganttRows.length === 0 && <p className="empty-state gantt-empty">No scheduled tasks this week</p>}
             </div>
           )}
         </section>
@@ -965,6 +1019,15 @@ export default function App() {
                   </select>
                 </label>
               </div>
+              <fieldset className="day-checkboxes">
+                <legend>Weekly days</legend>
+                {days.map((day, index) => (
+                  <label key={day}>
+                    <input name="recurrenceDays" type="checkbox" value={index} />
+                    {day}
+                  </label>
+                ))}
+              </fieldset>
               <label>
                 Recurrence time
                 <select name="recurrenceStartMinute" defaultValue={9 * 60}>
@@ -978,23 +1041,11 @@ export default function App() {
               <div className="field-grid">
                 <label>
                   Gantt start
-                  <select name="ganttStartDay" defaultValue={0}>
-                    {days.map((day, index) => (
-                      <option key={day} value={index}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
+                  <input name="ganttStartDate" type="date" defaultValue={dateInputValue(weekStart)} />
                 </label>
                 <label>
                   Gantt end
-                  <select name="ganttEndDay" defaultValue={0}>
-                    {days.map((day, index) => (
-                      <option key={day} value={index}>
-                        {day}
-                      </option>
-                    ))}
-                  </select>
+                  <input name="ganttEndDate" type="date" defaultValue={dateInputValue(addDays(weekStart, 6))} />
                 </label>
               </div>
               <footer className="modal-actions">
@@ -1081,6 +1132,81 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+                <label>
+                  Day
+                  <select
+                    value={selectedTask.recurrenceDay}
+                    onChange={(event) => {
+                      const day = Number(event.target.value);
+                      updateTask({
+                        ...selectedTask,
+                        recurrenceDay: day,
+                        recurrenceDays: day === NO_RECURRENCE_DAY ? [] : [day],
+                      });
+                    }}
+                  >
+                    <option value={NO_RECURRENCE_DAY}>None</option>
+                    {days.map((day, index) => (
+                      <option key={day} value={index}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <fieldset className="day-checkboxes">
+                  <legend>Weekly days</legend>
+                  {days.map((day, index) => (
+                    <label key={day}>
+                      <input
+                        checked={getTaskRecurrenceDays(selectedTask).includes(index)}
+                        onChange={(event) => {
+                          const checkedDays = new Set(getTaskRecurrenceDays(selectedTask));
+                          if (event.target.checked) checkedDays.add(index);
+                          else checkedDays.delete(index);
+                          const recurrenceDays = Array.from(checkedDays).sort((a, b) => a - b);
+                          updateTask({
+                            ...selectedTask,
+                            recurrenceDay: recurrenceDays[0] ?? NO_RECURRENCE_DAY,
+                            recurrenceDays,
+                          });
+                        }}
+                        type="checkbox"
+                      />
+                      {day}
+                    </label>
+                  ))}
+                </fieldset>
+                <label>
+                  Recurrence time
+                  <select
+                    value={selectedTask.recurrenceStartMinute}
+                    onChange={(event) => updateTask({...selectedTask, recurrenceStartMinute: Number(event.target.value)})}
+                  >
+                    {Array.from({length: 24}, (_, hour) => (
+                      <option key={hour} value={hour * 60}>
+                        {formatTime(hour * 60)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="field-grid">
+                  <label>
+                    Gantt start
+                    <input
+                      type="date"
+                      value={selectedTask.ganttStartDate || dateInputValue(weekStart)}
+                      onChange={(event) => updateTask({...selectedTask, ganttStartDate: event.target.value})}
+                    />
+                  </label>
+                  <label>
+                    Gantt end
+                    <input
+                      type="date"
+                      value={selectedTask.ganttEndDate || dateInputValue(addDays(weekStart, 6))}
+                      onChange={(event) => updateTask({...selectedTask, ganttEndDate: event.target.value})}
+                    />
+                  </label>
+                </div>
                 <footer className="modal-actions">
                   <button
                     className="danger"

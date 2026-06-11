@@ -183,6 +183,38 @@ h2 {
   grid-template-columns: 1fr 1fr;
 }
 
+.day-checkboxes {
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 12px;
+}
+
+.day-checkboxes legend {
+  color: #3f4d5d;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 6px;
+}
+
+.day-checkboxes label {
+  align-items: center;
+  color: #405066;
+  display: flex;
+  flex-direction: row;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.day-checkboxes input {
+  min-height: auto;
+  padding: 0;
+  width: auto;
+}
+
 label {
   color: #3f4d5d;
   font-size: 12px;
@@ -656,6 +688,16 @@ button:disabled {
   z-index: 2;
 }
 
+.gantt-header span {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gantt-header small {
+  color: #7a8797;
+  font-size: 11px;
+}
+
 .gantt-row > span {
   align-items: center;
   border-right: 1px solid #edf1f5;
@@ -679,6 +721,10 @@ button:disabled {
   margin: 8px;
   min-height: 34px;
   text-align: center;
+}
+
+.gantt-empty {
+  margin: 14px;
 }
 
 .detail-section {
@@ -926,6 +972,7 @@ button:disabled {
   }
 
   .field-grid,
+  .day-checkboxes,
   .summary-grid {
     grid-template-columns: 1fr;
   }

@@ -21,9 +21,12 @@ export type Task = {
   tags: string[];
   recurrence: Recurrence;
   recurrenceDay: number;
+  recurrenceDays: number[];
   recurrenceStartMinute: number;
   ganttStartDay: number;
   ganttEndDay: number;
+  ganttStartDate: string;
+  ganttEndDate: string;
 };
 
 export type CalendarEvent = {
@@ -84,9 +87,12 @@ const initialData: PlannerData = {
       tags: ['paper', 'research'],
       recurrence: 'weekly',
       recurrenceDay: 1,
+      recurrenceDays: [1],
       recurrenceStartMinute: 13 * 60,
       ganttStartDay: 0,
       ganttEndDay: 2,
+      ganttStartDate: '',
+      ganttEndDate: '',
     },
     {
       id: crypto.randomUUID(),
@@ -98,9 +104,12 @@ const initialData: PlannerData = {
       tags: ['seminar'],
       recurrence: 'weekly',
       recurrenceDay: 3,
+      recurrenceDays: [3],
       recurrenceStartMinute: 10 * 60,
       ganttStartDay: 2,
       ganttEndDay: 4,
+      ganttStartDate: '',
+      ganttEndDate: '',
     },
     {
       id: crypto.randomUUID(),
@@ -112,9 +121,12 @@ const initialData: PlannerData = {
       tags: ['english', 'habit'],
       recurrence: 'daily',
       recurrenceDay: NO_RECURRENCE_DAY,
+      recurrenceDays: [],
       recurrenceStartMinute: 8 * 60,
       ganttStartDay: 0,
       ganttEndDay: 6,
+      ganttStartDate: '',
+      ganttEndDate: '',
     },
   ],
   events: [],
@@ -140,6 +152,15 @@ export function snapToQuarterHour(value: number) {
 
 function normalizeTask(raw: Partial<Task>, projectId: string): Task {
   const recurrenceDay = Number(raw.recurrenceDay);
+  const recurrenceDays = Array.isArray(raw.recurrenceDays)
+    ? raw.recurrenceDays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day < days.length)
+    : [];
+  const fallbackRecurrenceDays =
+    recurrenceDays.length > 0
+      ? recurrenceDays
+      : Number.isFinite(recurrenceDay) && recurrenceDay >= 0 && recurrenceDay < days.length
+        ? [recurrenceDay]
+        : [];
 
   return {
     id: raw.id ?? crypto.randomUUID(),
@@ -151,9 +172,12 @@ function normalizeTask(raw: Partial<Task>, projectId: string): Task {
     tags: raw.tags ?? [],
     recurrence: raw.recurrence ?? 'none',
     recurrenceDay: Number.isFinite(recurrenceDay) && recurrenceDay >= NO_RECURRENCE_DAY && recurrenceDay < days.length ? recurrenceDay : NO_RECURRENCE_DAY,
+    recurrenceDays: fallbackRecurrenceDays,
     recurrenceStartMinute: Number(raw.recurrenceStartMinute) || 9 * 60,
     ganttStartDay: Number(raw.ganttStartDay) || 0,
     ganttEndDay: Number(raw.ganttEndDay) || Number(raw.ganttStartDay) || 0,
+    ganttStartDate: raw.ganttStartDate ?? '',
+    ganttEndDate: raw.ganttEndDate ?? '',
   };
 }
 
@@ -253,6 +277,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
           ...task,
           recurrence: 'none',
           recurrenceDay: NO_RECURRENCE_DAY,
+          recurrenceDays: [],
           status: task.status === 'Done' ? 'Done' : 'Todo',
         })),
       }),
