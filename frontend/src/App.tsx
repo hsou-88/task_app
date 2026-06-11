@@ -5,6 +5,7 @@ import {DndContext, DragEndEvent, DragOverlay, KeyboardSensor, PointerSensor, us
 import {FormEvent, useMemo, useRef, useState} from 'react';
 import {
   CalendarEvent,
+  NO_RECURRENCE_DAY,
   Project,
   Recurrence,
   Task,
@@ -27,7 +28,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.3';
+const APP_VERSION = 'v1.3.4';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -90,7 +91,7 @@ function createTaskFromForm(formData: FormData, fallbackProjectId: string): Task
     projectId: String(formData.get('projectId') ?? fallbackProjectId),
     tags: parseTags(formData.get('tags')),
     recurrence: String(formData.get('recurrence') ?? 'none') as Recurrence,
-    recurrenceDay: Number(formData.get('recurrenceDay') ?? 0),
+    recurrenceDay: Number(formData.get('recurrenceDay') ?? NO_RECURRENCE_DAY),
     recurrenceStartMinute: Number(formData.get('recurrenceStartMinute') ?? 9 * 60),
     ganttStartDay,
     ganttEndDay: Math.max(ganttStartDay, Number(formData.get('ganttEndDay') ?? ganttStartDay)),
@@ -264,7 +265,7 @@ export default function App() {
     [events, projects, tasks],
   );
 
-  function scheduleTask(taskId: string, day: number, minute: number, source: CalendarEvent['source'] = 'manual') {
+  function scheduleTask(taskId: string, day: number, minute: number, source: CalendarEvent['source'] = 'manual', reflectDay = false) {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || day < 0 || day > 6) return;
 
@@ -277,6 +278,10 @@ export default function App() {
       endMinute: Math.min(24 * 60, startMinute + task.duration),
       source,
     });
+
+    if (reflectDay && task.recurrenceDay !== day) {
+      updateTask({...task, recurrenceDay: day});
+    }
   }
 
   function handleCreateTask(event: FormEvent<HTMLFormElement>) {
@@ -364,7 +369,7 @@ export default function App() {
     if (!dateValue || !timeValue) return;
 
     const droppedDate = new Date(`${dateValue}T${timeValue}`);
-    scheduleTask(taskId, dayIndexFromDate(droppedDate, weekStart), minutesFromDate(droppedDate));
+    scheduleTask(taskId, dayIndexFromDate(droppedDate, weekStart), minutesFromDate(droppedDate), 'manual', true);
   }
 
   const activeTask = activeTaskId ? tasks.find((task) => task.id === activeTaskId) : null;
@@ -421,7 +426,8 @@ export default function App() {
                 </label>
                 <label>
                   Day
-                  <select name="recurrenceDay" defaultValue={0}>
+                  <select name="recurrenceDay" defaultValue={NO_RECURRENCE_DAY}>
+                    <option value={NO_RECURRENCE_DAY}>None</option>
                     {days.map((day, index) => (
                       <option key={day} value={index}>
                         {day}
@@ -766,6 +772,7 @@ export default function App() {
                     value={selectedTask.recurrenceDay}
                     onChange={(event) => updateTask({...selectedTask, recurrenceDay: Number(event.target.value)})}
                   >
+                    <option value={NO_RECURRENCE_DAY}>None</option>
                     {days.map((day, index) => (
                       <option key={day} value={index}>
                         {day}

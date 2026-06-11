@@ -61,6 +61,7 @@ const LEGACY_KEYS = ['research-planner-v0.4', 'research-planner-v0.1'];
 
 export const statuses: TaskStatus[] = ['Todo', 'Doing', 'Done'];
 export const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+export const NO_RECURRENCE_DAY = -1;
 export const projectColors = ['#2e6fbb', '#168260', '#b45b2a', '#8c5ab8', '#ad3f5f', '#5d6b7a'];
 
 const defaultProjects: Project[] = [
@@ -110,7 +111,7 @@ const initialData: PlannerData = {
       projectId: 'english',
       tags: ['english', 'habit'],
       recurrence: 'daily',
-      recurrenceDay: 0,
+      recurrenceDay: NO_RECURRENCE_DAY,
       recurrenceStartMinute: 8 * 60,
       ganttStartDay: 0,
       ganttEndDay: 6,
@@ -138,6 +139,8 @@ export function snapToQuarterHour(value: number) {
 }
 
 function normalizeTask(raw: Partial<Task>, projectId: string): Task {
+  const recurrenceDay = Number(raw.recurrenceDay);
+
   return {
     id: raw.id ?? crypto.randomUUID(),
     title: raw.title ?? 'Untitled',
@@ -147,7 +150,7 @@ function normalizeTask(raw: Partial<Task>, projectId: string): Task {
     projectId: raw.projectId ?? projectId,
     tags: raw.tags ?? [],
     recurrence: raw.recurrence ?? 'none',
-    recurrenceDay: Number(raw.recurrenceDay) || 0,
+    recurrenceDay: Number.isFinite(recurrenceDay) && recurrenceDay >= NO_RECURRENCE_DAY && recurrenceDay < days.length ? recurrenceDay : NO_RECURRENCE_DAY,
     recurrenceStartMinute: Number(raw.recurrenceStartMinute) || 9 * 60,
     ganttStartDay: Number(raw.ganttStartDay) || 0,
     ganttEndDay: Number(raw.ganttEndDay) || Number(raw.ganttStartDay) || 0,
@@ -253,7 +256,12 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
       const recurringEvents = state.tasks.flatMap((task) => {
         if (task.recurrence === 'none') return [];
 
-        const targetDays = task.recurrence === 'daily' ? days.map((_, dayIndex) => dayIndex) : [task.recurrenceDay];
+        const targetDays =
+          task.recurrence === 'daily'
+            ? days.map((_, dayIndex) => dayIndex)
+            : task.recurrenceDay === NO_RECURRENCE_DAY
+              ? []
+              : [task.recurrenceDay];
         return targetDays.map((day) => {
           const startMinute = snapToQuarterHour(task.recurrenceStartMinute);
           return {
