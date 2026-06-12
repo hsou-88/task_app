@@ -30,7 +30,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.10';
+const APP_VERSION = 'v1.3.11';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -86,27 +86,34 @@ function dateInputValue(date: Date) {
 }
 
 function isDateInRange(date: Date, startDate: string, endDate: string) {
+  if (startDate && endDate && startDate > endDate) return isDateInRange(date, endDate, startDate);
   const dateValue = dateInputValue(date);
   const startsAfterStart = !startDate || dateValue >= startDate;
   const endsBeforeEnd = !endDate || dateValue <= endDate;
   return startsAfterStart && endsBeforeEnd;
 }
 
+function getTaskWeeklyDays(task: Task) {
+  if (task.recurrenceDays.length > 0) return task.recurrenceDays;
+  return task.recurrenceDay === NO_RECURRENCE_DAY ? [] : [task.recurrenceDay];
+}
+
 function getTaskRecurrenceDays(task: Task) {
   if (task.recurrence === 'daily') return days.map((_, dayIndex) => dayIndex);
   if (task.recurrence !== 'weekly') return [];
-  if (task.recurrenceDays.length > 0) return task.recurrenceDays;
-  return task.recurrenceDay === NO_RECURRENCE_DAY ? [] : [task.recurrenceDay];
+  return getTaskWeeklyDays(task);
 }
 
 function createTaskFromForm(formData: FormData, fallbackProjectId: string): Task {
   const duration = Number(formData.get('duration') ?? 60);
   const ganttStartDay = Number(formData.get('ganttStartDay') ?? 0);
+  const requestedRecurrence = String(formData.get('recurrence') ?? 'none') as Recurrence;
   const recurrenceDays = formData
     .getAll('recurrenceDays')
     .map(Number)
     .filter((day) => Number.isInteger(day) && day >= 0 && day < days.length);
   const recurrenceDay = Number(formData.get('recurrenceDay') ?? NO_RECURRENCE_DAY);
+  const hasWeeklySelection = recurrenceDays.length > 0 || recurrenceDay !== NO_RECURRENCE_DAY;
 
   return {
     id: crypto.randomUUID(),
@@ -116,7 +123,7 @@ function createTaskFromForm(formData: FormData, fallbackProjectId: string): Task
     status: 'Todo',
     projectId: String(formData.get('projectId') ?? fallbackProjectId),
     tags: parseTags(formData.get('tags')),
-    recurrence: String(formData.get('recurrence') ?? 'none') as Recurrence,
+    recurrence: requestedRecurrence === 'none' && hasWeeklySelection ? 'weekly' : requestedRecurrence,
     recurrenceDay: recurrenceDays[0] ?? recurrenceDay,
     recurrenceDays,
     recurrenceStartMinute: Number(formData.get('recurrenceStartMinute') ?? 9 * 60),
@@ -610,7 +617,10 @@ export default function App() {
                       <DraggableTaskCard
                         key={task.id}
                         onDelete={() => removeTask(task.id)}
-                        onSelect={() => setSelectedTaskId(task.id)}
+                        onSelect={() => {
+                          setSelectedTaskId(task.id);
+                          setModalMode('taskDetail');
+                        }}
                         project={projectById.get(task.projectId)}
                         selected={selectedTaskId === task.id}
                         task={task}
@@ -1187,6 +1197,7 @@ export default function App() {
                       const day = Number(event.target.value);
                       updateTask({
                         ...selectedTask,
+                        recurrence: day === NO_RECURRENCE_DAY ? selectedTask.recurrence : 'weekly',
                         recurrenceDay: day,
                         recurrenceDays: day === NO_RECURRENCE_DAY ? [] : [day],
                       });
@@ -1205,14 +1216,15 @@ export default function App() {
                   {days.map((day, index) => (
                     <label key={day}>
                       <input
-                        checked={getTaskRecurrenceDays(selectedTask).includes(index)}
+                        checked={getTaskWeeklyDays(selectedTask).includes(index)}
                         onChange={(event) => {
-                          const checkedDays = new Set(getTaskRecurrenceDays(selectedTask));
+                          const checkedDays = new Set(getTaskWeeklyDays(selectedTask));
                           if (event.target.checked) checkedDays.add(index);
                           else checkedDays.delete(index);
                           const recurrenceDays = Array.from(checkedDays).sort((a, b) => a - b);
                           updateTask({
                             ...selectedTask,
+                            recurrence: recurrenceDays.length > 0 ? 'weekly' : selectedTask.recurrence,
                             recurrenceDay: recurrenceDays[0] ?? NO_RECURRENCE_DAY,
                             recurrenceDays,
                           });
