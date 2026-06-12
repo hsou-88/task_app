@@ -30,7 +30,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.12';
+const APP_VERSION = 'v1.3.13';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {

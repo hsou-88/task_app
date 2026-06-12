@@ -45,6 +45,7 @@ export type PlannerData = {
   projects: Project[];
   tasks: Task[];
   events: CalendarEvent[];
+  deletedTaskIds: string[];
 };
 
 type PlannerStore = PlannerData & {
@@ -138,6 +139,7 @@ const initialData: PlannerData = {
     },
   ],
   events: [],
+  deletedTaskIds: [],
 };
 
 export function formatTime(totalMinutes: number) {
@@ -193,12 +195,17 @@ function normalizeTask(raw: Partial<Task>, projectId: string): Task {
 
 function normalizeData(raw: Partial<PlannerData>): PlannerData {
   const projects = raw.projects?.length ? raw.projects : defaultProjects;
-  const tasks = (raw.tasks ?? []).map((task) => normalizeTask(task, projects[0].id));
+  const deletedTaskIds = Array.from(new Set((raw.deletedTaskIds ?? []).filter(Boolean)));
+  const deletedTaskIdSet = new Set(deletedTaskIds);
+  const tasks = (raw.tasks ?? [])
+    .map((task) => normalizeTask(task, projects[0].id))
+    .filter((task) => !deletedTaskIdSet.has(task.id));
   const taskIds = new Set(tasks.map((task) => task.id));
 
   return {
     projects,
     tasks,
+    deletedTaskIds,
     events: (raw.events ?? [])
       .map((event) => ({
         id: event.id ?? crypto.randomUUID(),
@@ -249,7 +256,7 @@ function loadData(): PlannerData {
 }
 
 function persist(data: PlannerData) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeData(data)));
 }
 
 function withPersist(state: PlannerData, patch: Partial<PlannerData>) {
@@ -261,7 +268,13 @@ function withPersist(state: PlannerData, patch: Partial<PlannerData>) {
 export const usePlannerStore = create<PlannerStore>((set, get) => ({
   ...loadData(),
 
-  addTask: (task) => set((state) => withPersist(state, {tasks: [task, ...state.tasks]})),
+  addTask: (task) =>
+    set((state) =>
+      withPersist(state, {
+        tasks: [task, ...state.tasks],
+        deletedTaskIds: state.deletedTaskIds.filter((taskId) => taskId !== task.id),
+      }),
+    ),
   updateTask: (task) =>
     set((state) => withPersist(state, {tasks: state.tasks.map((item) => (item.id === task.id ? task : item))})),
   deleteTask: (taskId) =>
@@ -269,6 +282,7 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
       withPersist(state, {
         tasks: state.tasks.filter((task) => task.id !== taskId),
         events: state.events.filter((event) => event.taskId !== taskId),
+        deletedTaskIds: Array.from(new Set([...state.deletedTaskIds, taskId])),
       }),
     ),
   addProject: (project) => set((state) => withPersist(state, {projects: [...state.projects, project]})),
@@ -313,15 +327,23 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
       }),
     ),
   replaceData: (data) =>
-    set(() => {
-      persist(data);
-      return data;
+    set((state) => {
+      const deletedTaskIds = Array.from(new Set([...state.deletedTaskIds, ...data.deletedTaskIds]));
+      const deletedTaskIdSet = new Set(deletedTaskIds);
+      const next = {
+        ...data,
+        deletedTaskIds,
+        tasks: data.tasks.filter((task) => !deletedTaskIdSet.has(task.id)),
+        events: data.events.filter((event) => !deletedTaskIdSet.has(event.taskId)),
+      };
+      persist(next);
+      return next;
     }),
 }));
 
 export function getStoreSnapshot() {
-  const {projects, tasks, events} = getPlannerState();
-  return {projects, tasks, events};
+  const {projects, tasks, events, deletedTaskIds} = getPlannerState();
+  return {projects, tasks, events, deletedTaskIds};
 }
 
 function getPlannerState() {
