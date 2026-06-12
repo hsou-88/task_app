@@ -30,7 +30,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.11';
+const APP_VERSION = 'v1.3.12';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -93,6 +93,10 @@ function isDateInRange(date: Date, startDate: string, endDate: string) {
   return startsAfterStart && endsBeforeEnd;
 }
 
+function isDateInRecurrenceRange(date: Date, task: Task) {
+  return isDateInRange(date, task.recurrenceStartDate, task.recurrenceEndDate);
+}
+
 function getTaskWeeklyDays(task: Task) {
   if (task.recurrenceDays.length > 0) return task.recurrenceDays;
   return task.recurrenceDay === NO_RECURRENCE_DAY ? [] : [task.recurrenceDay];
@@ -127,6 +131,8 @@ function createTaskFromForm(formData: FormData, fallbackProjectId: string): Task
     recurrenceDay: recurrenceDays[0] ?? recurrenceDay,
     recurrenceDays,
     recurrenceStartMinute: Number(formData.get('recurrenceStartMinute') ?? 9 * 60),
+    recurrenceStartDate: String(formData.get('recurrenceStartDate') ?? ''),
+    recurrenceEndDate: String(formData.get('recurrenceEndDate') ?? ''),
     ganttStartDay,
     ganttEndDay: Math.max(ganttStartDay, Number(formData.get('ganttEndDay') ?? ganttStartDay)),
     ganttStartDate: String(formData.get('ganttStartDate') ?? ''),
@@ -272,7 +278,7 @@ export default function App() {
       const startMinute = snapToQuarterHour(task.recurrenceStartMinute);
 
       return targetDays
-        .filter((day) => isDateInRange(addDays(weekStart, day), task.ganttStartDate, task.ganttEndDate))
+        .filter((day) => isDateInRecurrenceRange(addDays(weekStart, day), task))
         .map((day) => ({
           id: `recurring-${weekKey}-${task.id}-${day}`,
           taskId: task.id,
@@ -400,6 +406,7 @@ export default function App() {
         recurrenceDay: task.recurrence === 'weekly' ? (nextRecurrenceDays[0] ?? NO_RECURRENCE_DAY) : task.recurrenceDay,
         recurrenceDays: nextRecurrenceDays,
         recurrenceStartMinute: startMinute,
+        recurrenceStartDate: task.recurrenceStartDate || dateInputValue(addDays(weekStart, day)),
       });
       return;
     }
@@ -1097,6 +1104,16 @@ export default function App() {
               </label>
               <div className="field-grid">
                 <label>
+                  Repeat start
+                  <input name="recurrenceStartDate" type="date" defaultValue={dateInputValue(weekStart)} />
+                </label>
+                <label>
+                  Repeat end
+                  <input name="recurrenceEndDate" type="date" />
+                </label>
+              </div>
+              <div className="field-grid">
+                <label>
                   Gantt start
                   <input name="ganttStartDate" type="date" defaultValue={dateInputValue(weekStart)} />
                 </label>
@@ -1248,6 +1265,24 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+                <div className="field-grid">
+                  <label>
+                    Repeat start
+                    <input
+                      type="date"
+                      value={selectedTask.recurrenceStartDate || dateInputValue(weekStart)}
+                      onChange={(event) => updateTask({...selectedTask, recurrenceStartDate: event.target.value})}
+                    />
+                  </label>
+                  <label>
+                    Repeat end
+                    <input
+                      type="date"
+                      value={selectedTask.recurrenceEndDate}
+                      onChange={(event) => updateTask({...selectedTask, recurrenceEndDate: event.target.value})}
+                    />
+                  </label>
+                </div>
                 <div className="field-grid">
                   <label>
                     Gantt start

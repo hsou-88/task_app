@@ -23,6 +23,8 @@ export type Task = {
   recurrenceDay: number;
   recurrenceDays: number[];
   recurrenceStartMinute: number;
+  recurrenceStartDate: string;
+  recurrenceEndDate: string;
   ganttStartDay: number;
   ganttEndDay: number;
   ganttStartDate: string;
@@ -89,6 +91,8 @@ const initialData: PlannerData = {
       recurrenceDay: 1,
       recurrenceDays: [1],
       recurrenceStartMinute: 13 * 60,
+      recurrenceStartDate: '',
+      recurrenceEndDate: '',
       ganttStartDay: 0,
       ganttEndDay: 2,
       ganttStartDate: '',
@@ -106,6 +110,8 @@ const initialData: PlannerData = {
       recurrenceDay: 3,
       recurrenceDays: [3],
       recurrenceStartMinute: 10 * 60,
+      recurrenceStartDate: '',
+      recurrenceEndDate: '',
       ganttStartDay: 2,
       ganttEndDay: 4,
       ganttStartDate: '',
@@ -123,6 +129,8 @@ const initialData: PlannerData = {
       recurrenceDay: NO_RECURRENCE_DAY,
       recurrenceDays: [],
       recurrenceStartMinute: 8 * 60,
+      recurrenceStartDate: '',
+      recurrenceEndDate: '',
       ganttStartDay: 0,
       ganttEndDay: 6,
       ganttStartDate: '',
@@ -174,6 +182,8 @@ function normalizeTask(raw: Partial<Task>, projectId: string): Task {
     recurrenceDay: Number.isFinite(recurrenceDay) && recurrenceDay >= NO_RECURRENCE_DAY && recurrenceDay < days.length ? recurrenceDay : NO_RECURRENCE_DAY,
     recurrenceDays: fallbackRecurrenceDays,
     recurrenceStartMinute: Number(raw.recurrenceStartMinute) || 9 * 60,
+    recurrenceStartDate: raw.recurrenceStartDate ?? '',
+    recurrenceEndDate: raw.recurrenceEndDate ?? '',
     ganttStartDay: Number(raw.ganttStartDay) || 0,
     ganttEndDay: Number(raw.ganttEndDay) || Number(raw.ganttStartDay) || 0,
     ganttStartDate: raw.ganttStartDate ?? '',
@@ -296,6 +306,8 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
           recurrence: 'none',
           recurrenceDay: NO_RECURRENCE_DAY,
           recurrenceDays: [],
+          recurrenceStartDate: '',
+          recurrenceEndDate: '',
           status: task.status === 'Done' ? 'Done' : 'Todo',
         })),
       }),
