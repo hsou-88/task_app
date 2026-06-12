@@ -1,7 +1,17 @@
 import FullCalendar from '@fullcalendar/react';
 import interactionPlugin from '@fullcalendar/interaction';
 import timeGridPlugin from '@fullcalendar/timegrid';
-import {DndContext, DragEndEvent, DragOverlay, KeyboardSensor, PointerSensor, useDraggable, useSensor, useSensors} from '@dnd-kit/core';
+import {
+  DndContext,
+  DragEndEvent,
+  DragMoveEvent,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  useDraggable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
 import {FormEvent, useMemo, useRef, useState} from 'react';
 import {
   CalendarEvent,
@@ -24,13 +34,14 @@ type ViewMode = 'calendar' | 'gantt';
 type FilterValue = TaskStatus | 'all';
 type ModalMode = 'createTask' | 'taskDetail' | 'projects' | null;
 type GanttSortMode = 'project' | 'time';
+type DropPreview = {day: number; minute: number; x: number; y: number} | null;
 
 const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'None', value: 'none'},
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.13';
+const APP_VERSION = 'v1.3.14';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -237,8 +248,10 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [weekStart, setWeekStartState] = useState(getInitialWeekStart);
   const [selectedDayIndex, setSelectedDayIndex] = useState(getInitialDayIndex);
+  const [showWeekTasks, setShowWeekTasks] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [ganttSortMode, setGanttSortMode] = useState<GanttSortMode>('project');
+  const [dropPreview, setDropPreview] = useState<DropPreview>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -300,8 +313,11 @@ export default function App() {
   );
   const scheduledTaskIds = useMemo(() => new Set(scheduledEvents.map((event) => event.taskId)), [scheduledEvents]);
   const selectedDayTasks = useMemo(
-    () => filteredTasks.filter((task) => selectedDayTaskIds.has(task.id) || !scheduledTaskIds.has(task.id)),
-    [filteredTasks, scheduledTaskIds, selectedDayTaskIds],
+    () =>
+      filteredTasks.filter((task) =>
+        showWeekTasks ? scheduledTaskIds.has(task.id) || !scheduledTaskIds.has(task.id) : selectedDayTaskIds.has(task.id) || !scheduledTaskIds.has(task.id),
+      ),
+    [filteredTasks, scheduledTaskIds, selectedDayTaskIds, showWeekTasks],
   );
   const conflictGroups = useMemo(() => {
     const conflicts: {day: number; first: CalendarEvent; second: CalendarEvent}[] = [];
@@ -398,6 +414,7 @@ export default function App() {
 
     const startMinute = snapToQuarterHour(minute);
     setSelectedDayIndex(day);
+    setShowWeekTasks(false);
     if (task.recurrence !== 'none') {
       const nextRecurrenceDays =
         task.recurrence === 'weekly' ? Array.from(new Set([...getTaskRecurrenceDays(task), day])).sort((a, b) => a - b) : task.recurrenceDays;
@@ -519,6 +536,7 @@ export default function App() {
 
   function handleTaskDragEnd(event: DragEndEvent) {
     setActiveTaskId(null);
+    setDropPreview(null);
     const taskId = String(event.active.id);
     const rect = event.active.rect.current.translated;
     if (!rect) return;
@@ -534,6 +552,36 @@ export default function App() {
 
     const droppedDate = new Date(`${dateValue}T${timeValue}`);
     scheduleTask(taskId, dayIndexFromDate(droppedDate, weekStart), minutesFromDate(droppedDate), 'manual', true);
+  }
+
+  function handleTaskDragMove(event: DragMoveEvent) {
+    const rect = event.active.rect.current.translated;
+    if (!rect) {
+      setDropPreview(null);
+      return;
+    }
+
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const elements = document.elementsFromPoint(x, y);
+    const dateElement = elements.find((element) => element.closest('[data-date]'))?.closest('[data-date]');
+    const timeElement = elements.find((element) => element.closest('[data-time]'))?.closest('[data-time]');
+    const dateValue = dateElement?.getAttribute('data-date');
+    const timeValue = timeElement?.getAttribute('data-time');
+
+    if (!dateValue || !timeValue) {
+      setDropPreview(null);
+      return;
+    }
+
+    const date = new Date(`${dateValue}T${timeValue}`);
+    const day = dayIndexFromDate(date, weekStart);
+    if (day < 0 || day > 6) {
+      setDropPreview(null);
+      return;
+    }
+
+    setDropPreview({day, minute: snapToQuarterHour(minutesFromDate(date)), x, y});
   }
 
   function closeEventPopup() {
@@ -565,7 +613,16 @@ export default function App() {
   const activeTask = activeTaskId ? tasks.find((task) => task.id === activeTaskId) : null;
 
   return (
-    <DndContext sensors={sensors} onDragEnd={handleTaskDragEnd} onDragStart={(event) => setActiveTaskId(String(event.active.id))}>
+    <DndContext
+      sensors={sensors}
+      onDragCancel={() => {
+        setActiveTaskId(null);
+        setDropPreview(null);
+      }}
+      onDragEnd={handleTaskDragEnd}
+      onDragMove={handleTaskDragMove}
+      onDragStart={(event) => setActiveTaskId(String(event.active.id))}
+    >
       <main className="planner-shell">
         <aside className="sidebar day-board">
           <section className="brand-panel">
@@ -595,18 +652,29 @@ export default function App() {
           </section>
 
           <section className="day-selector" aria-label="Selected day">
+            <button className={showWeekTasks ? 'active' : ''} onClick={() => setShowWeekTasks(true)} type="button">
+              Week
+            </button>
             {days.map((day, index) => (
-              <button className={selectedDayIndex === index ? 'active' : ''} key={day} onClick={() => setSelectedDayIndex(index)} type="button">
+              <button
+                className={!showWeekTasks && selectedDayIndex === index ? 'active' : ''}
+                key={day}
+                onClick={() => {
+                  setSelectedDayIndex(index);
+                  setShowWeekTasks(false);
+                }}
+                type="button"
+              >
                 {day}
               </button>
             ))}
           </section>
 
-          <section className="kanban" aria-label={`${days[selectedDayIndex]} tasks`}>
+          <section className="kanban" aria-label={showWeekTasks ? 'Week tasks' : `${days[selectedDayIndex]} tasks`}>
             <header className="day-board-header">
               <div>
-                <p className="eyebrow">Dropped on</p>
-                <h2>{days[selectedDayIndex]}</h2>
+                <p className="eyebrow">{showWeekTasks ? 'All visible' : 'Dropped on'}</p>
+                <h2>{showWeekTasks ? 'This week' : days[selectedDayIndex]}</h2>
               </div>
               <span>{selectedDayTasks.length} tasks</span>
             </header>
@@ -707,7 +775,10 @@ export default function App() {
                 allDaySlot={false}
                 dateClick={(arg) => {
                   const clickedDay = dayIndexFromDate(arg.date, weekStart);
-                  if (clickedDay >= 0 && clickedDay <= 6) setSelectedDayIndex(clickedDay);
+                  if (clickedDay >= 0 && clickedDay <= 6) {
+                    setSelectedDayIndex(clickedDay);
+                    setShowWeekTasks(false);
+                  }
                   if (selectedTask) scheduleTask(selectedTask.id, clickedDay, minutesFromDate(arg.date));
                 }}
                 dayHeaderFormat={{weekday: 'short'}}
@@ -720,7 +791,10 @@ export default function App() {
                   const taskId = String(arg.event.extendedProps.taskId ?? '');
                   if (taskId) setSelectedTaskId(taskId);
                   const event = scheduledEvents.find((item) => item.id === arg.event.id);
-                  if (event) setSelectedDayIndex(event.day);
+                  if (event) {
+                    setSelectedDayIndex(event.day);
+                    setShowWeekTasks(false);
+                  }
                   setSelectedEventId(arg.event.id);
                 }}
                 eventContent={(arg) => (
@@ -733,7 +807,11 @@ export default function App() {
                   </div>
                 )}
                 eventDrop={(arg) => updateEventFromDates(arg.event.id, arg.event.start, arg.event.end)}
+                eventDragMinDistance={3}
+                eventDurationEditable
+                eventLongPressDelay={160}
                 eventResize={(arg) => updateEventFromDates(arg.event.id, arg.event.start, arg.event.end)}
+                eventStartEditable
                 events={calendarEvents}
                 expandRows
                 firstDay={1}
@@ -742,6 +820,7 @@ export default function App() {
                 initialDate={weekStart}
                 initialView="timeGridWeek"
                 key={weekStart.toISOString()}
+                longPressDelay={160}
                 plugins={[timeGridPlugin, interactionPlugin]}
                 slotDuration="00:15:00"
                 slotLabelInterval="01:00:00"
@@ -1483,9 +1562,16 @@ export default function App() {
         </div>
       )}
 
+      {dropPreview && activeTask && (
+        <div className="drop-preview-pill" style={{left: dropPreview.x + 14, top: dropPreview.y - 44}}>
+          <strong>{days[dropPreview.day]}</strong>
+          <span>{formatTime(dropPreview.minute)}</span>
+        </div>
+      )}
+
       <DragOverlay>
         {activeTask ? (
-          <div className="task-card drag-overlay">
+          <div className="task-card drag-overlay compact">
             <strong>{activeTask.title}</strong>
             <span>{activeTask.duration} min</span>
           </div>

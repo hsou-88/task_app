@@ -149,7 +149,7 @@ h2 {
   border-bottom: 1px solid #e5ebf2;
   display: grid;
   gap: 6px;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   padding: 14px 0 16px;
 }
 
@@ -357,6 +357,14 @@ button:disabled {
   width: 260px;
 }
 
+.drag-overlay.compact {
+  gap: 4px;
+  min-height: 54px;
+  padding: 10px;
+  pointer-events: none;
+  width: 180px;
+}
+
 .project-dot {
   border-radius: 999px;
   height: 8px;
@@ -549,6 +557,7 @@ button:disabled {
   box-shadow: none;
   cursor: grab;
   overflow: hidden;
+  touch-action: none;
 }
 
 .fc .fc-event.has-conflict {
@@ -563,6 +572,26 @@ button:disabled {
 
 .fc .fc-event:active {
   cursor: grabbing;
+}
+
+.drop-preview-pill {
+  background: #1d4f91;
+  border: 1px solid #173f73;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(24, 40, 62, 0.24);
+  color: #ffffff;
+  display: flex;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 10px;
+  pointer-events: none;
+  position: fixed;
+  transform: translate3d(0, 0, 0);
+  z-index: 80;
+}
+
+.drop-preview-pill span {
+  font-weight: 900;
 }
 
 .fc-task-event {
