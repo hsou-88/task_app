@@ -43,7 +43,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.15';
+const APP_VERSION = 'v1.3.16';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -280,6 +280,12 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<FilterValue>('all');
   const [projectFilter, setProjectFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState('all');
+  const [collapsedStatuses, setCollapsedStatuses] = useState<Record<TaskStatus, boolean>>({
+    Todo: false,
+    Doing: false,
+    Done: false,
+    Habit: false,
+  });
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [weekStart, setWeekStartState] = useState(getInitialWeekStart);
   const [selectedDayIndex, setSelectedDayIndex] = useState(getInitialDayIndex);
@@ -780,33 +786,60 @@ export default function App() {
               </div>
               <span>{selectedDayTasks.length} tasks</span>
             </header>
-            {statuses.map((status) => (
-              <div className="kanban-column" key={status}>
-                <header>
-                  <h2>{status}</h2>
-                  <span>{selectedDayTasks.filter((task) => task.status === status).length}</span>
-                </header>
+            {statuses.map((status) => {
+              const statusTasks = selectedDayTasks.filter((task) => task.status === status);
+              const projectGroups = projects
+                .map((project) => ({
+                  project,
+                  tasks: statusTasks.filter((task) => task.projectId === project.id),
+                }))
+                .filter((group) => group.tasks.length > 0);
+              const isCollapsed = collapsedStatuses[status];
 
-                <div className="task-list">
-                  {selectedDayTasks
-                    .filter((task) => task.status === status)
-                    .map((task) => (
-                      <DraggableTaskCard
-                        key={task.id}
-                        onDelete={() => removeTask(task.id)}
-                        onSelect={() => {
-                          setSelectedTaskId(task.id);
-                          setModalMode('taskDetail');
-                        }}
-                        project={projectById.get(task.projectId)}
-                        selected={selectedTaskId === task.id}
-                        task={task}
-                      />
-                    ))}
-                  {!selectedDayTasks.some((task) => task.status === status) && <p className="empty-state">No tasks</p>}
+              return (
+                <div className={`kanban-column ${isCollapsed ? 'collapsed' : ''}`} key={status}>
+                  <button
+                    aria-expanded={!isCollapsed}
+                    className="kanban-column-toggle"
+                    onClick={() => setCollapsedStatuses((current) => ({...current, [status]: !current[status]}))}
+                    type="button"
+                  >
+                    <h2>{status}</h2>
+                    <span>{statusTasks.length}</span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="task-list">
+                      {projectGroups.map((group) => (
+                        <section className="task-project-group" key={`${status}-${group.project.id}`}>
+                          <header>
+                            <span className="project-dot inline" style={{background: group.project.color}} />
+                            <strong>{group.project.name}</strong>
+                            <small>{group.tasks.length}</small>
+                          </header>
+                          <div className="task-project-list">
+                            {group.tasks.map((task) => (
+                              <DraggableTaskCard
+                                key={task.id}
+                                onDelete={() => removeTask(task.id)}
+                                onSelect={() => {
+                                  setSelectedTaskId(task.id);
+                                  setModalMode('taskDetail');
+                                }}
+                                project={projectById.get(task.projectId)}
+                                selected={selectedTaskId === task.id}
+                                task={task}
+                              />
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                      {statusTasks.length === 0 && <p className="empty-state">No tasks</p>}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </section>
         </aside>
 

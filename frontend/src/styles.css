@@ -285,7 +285,7 @@ button:disabled {
   gap: 10px;
 }
 
-.kanban-column header,
+.kanban-column-toggle,
 .calendar-toolbar {
   align-items: center;
   display: flex;
@@ -293,7 +293,39 @@ button:disabled {
   gap: 12px;
 }
 
-.kanban-column header span {
+.kanban-column-toggle {
+  background: #f7fbff;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  color: #1b2430;
+  min-height: 42px;
+  padding: 9px 11px;
+  text-align: left;
+}
+
+.kanban-column-toggle:hover {
+  background: #eef5ff;
+  border-color: #b9cbe2;
+  color: #163d70;
+}
+
+.kanban-column-toggle h2 {
+  font-size: 15px;
+}
+
+.kanban-column-toggle::after {
+  color: #526174;
+  content: "v";
+  font-size: 13px;
+  font-weight: 900;
+  margin-left: auto;
+}
+
+.kanban-column.collapsed .kanban-column-toggle::after {
+  content: ">";
+}
+
+.kanban-column-toggle span {
   background: #e8eef6;
   border-radius: 999px;
   color: #405066;
@@ -306,6 +338,41 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.task-project-group {
+  display: grid;
+  gap: 8px;
+}
+
+.task-project-group header {
+  align-items: center;
+  color: #405066;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 0 4px;
+}
+
+.task-project-group strong {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-project-group small {
+  background: #eef2f6;
+  border-radius: 999px;
+  color: #5c6a7a;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 7px;
+}
+
+.task-project-list {
+  display: grid;
+  gap: 9px;
 }
 
 .task-card {
@@ -372,6 +439,10 @@ button:disabled {
   right: 10px;
   top: 10px;
   width: 8px;
+}
+
+.project-dot.inline {
+  position: static;
 }
 
 .task-card span,

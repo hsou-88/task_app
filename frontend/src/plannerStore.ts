@@ -1,6 +1,6 @@
 import {create} from 'zustand';
 
-export type TaskStatus = 'Todo' | 'Doing' | 'Done';
+export type TaskStatus = 'Todo' | 'Doing' | 'Done' | 'Habit';
 export type Recurrence = 'none' | 'daily' | 'weekly';
 export type EventSource = 'manual' | 'recurring';
 
@@ -76,7 +76,7 @@ type PlannerStore = PlannerData & {
 const STORAGE_KEY = 'research-planner-v1';
 const LEGACY_KEYS = ['research-planner-v0.4', 'research-planner-v0.1'];
 
-export const statuses: TaskStatus[] = ['Todo', 'Doing', 'Done'];
+export const statuses: TaskStatus[] = ['Todo', 'Doing', 'Done', 'Habit'];
 export const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export const NO_RECURRENCE_DAY = -1;
 export const projectColors = ['#2e6fbb', '#168260', '#b45b2a', '#8c5ab8', '#ad3f5f', '#5d6b7a'];
@@ -184,12 +184,14 @@ function normalizeTask(raw: Partial<Task>, projectId: string): Task {
         ? [recurrenceDay]
         : [];
 
+  const status = statuses.includes(raw.status as TaskStatus) ? (raw.status as TaskStatus) : 'Todo';
+
   return {
     id: raw.id ?? crypto.randomUUID(),
     title: raw.title ?? 'Untitled',
     description: raw.description ?? '',
     duration: Number(raw.duration) || 60,
-    status: raw.status ?? 'Todo',
+    status,
     projectId: raw.projectId ?? projectId,
     tags: raw.tags ?? [],
     recurrence: raw.recurrence ?? 'none',
