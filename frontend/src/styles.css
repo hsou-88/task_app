@@ -102,7 +102,7 @@ h2 {
   border: 1px solid #d7e0ea;
   border-radius: 8px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 3px;
 }
 
@@ -867,6 +867,37 @@ button:disabled {
 .app-modal.wide {
   max-width: 880px;
   width: min(100%, 880px);
+}
+
+.blocked-list {
+  display: grid;
+  gap: 8px;
+}
+
+.blocked-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(173, 47, 47, 0.18);
+  border-radius: 8px;
+  background: rgba(173, 47, 47, 0.06);
+}
+
+.blocked-item strong,
+.blocked-item span {
+  min-width: 0;
+}
+
+.event-description-textarea {
+  min-height: 180px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.fc .fc-bg-event {
+  opacity: 1;
 }
 
 .modal-form,

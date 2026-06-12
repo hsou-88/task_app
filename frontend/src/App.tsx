@@ -6,6 +6,7 @@ import {
   DragEndEvent,
   DragMoveEvent,
   DragOverlay,
+  DragStartEvent,
   KeyboardSensor,
   PointerSensor,
   useDraggable,
@@ -14,6 +15,7 @@ import {
 } from '@dnd-kit/core';
 import {FormEvent, useMemo, useRef, useState} from 'react';
 import {
+  BlockedTime,
   CalendarEvent,
   NO_RECURRENCE_DAY,
   Project,
@@ -30,9 +32,9 @@ import {
   usePlannerStore,
 } from './plannerStore';
 
-type ViewMode = 'calendar' | 'gantt';
+type ViewMode = 'week' | 'today' | 'gantt';
 type FilterValue = TaskStatus | 'all';
-type ModalMode = 'createTask' | 'taskDetail' | 'projects' | null;
+type ModalMode = 'createTask' | 'taskDetail' | 'projects' | 'blockedTimes' | null;
 type GanttSortMode = 'project' | 'time';
 type DropPreview = {day: number; minute: number; x: number; y: number} | null;
 
@@ -41,7 +43,7 @@ const recurrenceOptions: {label: string; value: Recurrence}[] = [
   {label: 'Daily', value: 'daily'},
   {label: 'Weekly', value: 'weekly'},
 ];
-const APP_VERSION = 'v1.3.14';
+const APP_VERSION = 'v1.3.15';
 const WEEK_STORAGE_KEY = 'research-planner-selected-week';
 
 function startOfWeek(date: Date) {
@@ -160,6 +162,35 @@ function createProjectFromForm(formData: FormData): Project {
   };
 }
 
+function createBlockedTimeFromForm(formData: FormData): BlockedTime {
+  const startMinute = Number(formData.get('startMinute') ?? 12 * 60);
+  const endMinute = Number(formData.get('endMinute') ?? 13 * 60);
+  const blockedDays = formData
+    .getAll('blockedDays')
+    .map(Number)
+    .filter((day) => Number.isInteger(day) && day >= 0 && day < days.length);
+
+  return {
+    id: crypto.randomUUID(),
+    title: String(formData.get('title') ?? '').trim() || 'Blocked',
+    days: blockedDays.length > 0 ? blockedDays : days.map((_, index) => index),
+    startMinute: Math.min(startMinute, endMinute),
+    endMinute: Math.max(startMinute + 15, endMinute),
+  };
+}
+
+function intervalsOverlap(startA: number, endA: number, startB: number, endB: number) {
+  return startA < endB && endA > startB;
+}
+
+function getPointerCoordinates(event: DragStartEvent | DragMoveEvent | DragEndEvent, fallbackX: number, fallbackY: number) {
+  const activator = event.activatorEvent;
+  if (activator instanceof TouchEvent && activator.touches[0]) return {x: activator.touches[0].clientX, y: activator.touches[0].clientY};
+  if (activator instanceof TouchEvent && activator.changedTouches[0]) return {x: activator.changedTouches[0].clientX, y: activator.changedTouches[0].clientY};
+  if (activator instanceof MouseEvent || activator instanceof PointerEvent) return {x: activator.clientX, y: activator.clientY};
+  return {x: fallbackX, y: fallbackY};
+}
+
 function DraggableTaskCard({
   onDelete,
   project,
@@ -225,6 +256,8 @@ export default function App() {
   const projects = usePlannerStore((state) => state.projects);
   const tasks = usePlannerStore((state) => state.tasks);
   const events = usePlannerStore((state) => state.events);
+  const blockedTimes = usePlannerStore((state) => state.blockedTimes);
+  const deletedTaskIds = usePlannerStore((state) => state.deletedTaskIds);
   const addTask = usePlannerStore((state) => state.addTask);
   const updateTask = usePlannerStore((state) => state.updateTask);
   const deleteTask = usePlannerStore((state) => state.deleteTask);
@@ -234,13 +267,15 @@ export default function App() {
   const addEvent = usePlannerStore((state) => state.addEvent);
   const updateEvent = usePlannerStore((state) => state.updateEvent);
   const deleteEvent = usePlannerStore((state) => state.deleteEvent);
+  const addBlockedTime = usePlannerStore((state) => state.addBlockedTime);
+  const deleteBlockedTime = usePlannerStore((state) => state.deleteBlockedTime);
   const clearSchedule = usePlannerStore((state) => state.clearSchedule);
   const replaceData = usePlannerStore((state) => state.replaceData);
 
   const [selectedTaskId, setSelectedTaskId] = useState(tasks[0]?.id ?? '');
   const [selectedEventId, setSelectedEventId] = useState('');
   const [selectedProjectId, setSelectedProjectId] = useState(projects[0]?.id ?? '');
-  const [viewMode, setViewMode] = useState<ViewMode>('calendar');
+  const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterValue>('all');
   const [projectFilter, setProjectFilter] = useState('all');
@@ -253,6 +288,7 @@ export default function App() {
   const [ganttSortMode, setGanttSortMode] = useState<GanttSortMode>('project');
   const [dropPreview, setDropPreview] = useState<DropPreview>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragPointerOffsetRef = useRef({x: 0, y: 0});
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -361,6 +397,21 @@ export default function App() {
         }),
     [conflictingEventIds, filteredTaskIds, projectById, scheduledEvents, tasks, weekStart],
   );
+  const blockedCalendarEvents = useMemo(
+    () =>
+      blockedTimes.flatMap((blockedTime) =>
+        blockedTime.days.map((day) => ({
+          id: `blocked-${blockedTime.id}-${weekKey}-${day}`,
+          title: blockedTime.title,
+          start: eventDate(weekStart, day, blockedTime.startMinute),
+          end: eventDate(weekStart, day, blockedTime.endMinute),
+          display: 'background',
+          backgroundColor: 'rgba(173, 47, 47, 0.16)',
+          extendedProps: {blocked: true},
+        })),
+      ),
+    [blockedTimes, weekKey, weekStart],
+  );
 
   const summaries = useMemo(
     () =>
@@ -413,6 +464,15 @@ export default function App() {
     if (!task || day < 0 || day > 6) return;
 
     const startMinute = snapToQuarterHour(minute);
+    const endMinute = Math.min(24 * 60, startMinute + task.duration);
+    const blockingTime = blockedTimes.find(
+      (blockedTime) => blockedTime.days.includes(day) && intervalsOverlap(startMinute, endMinute, blockedTime.startMinute, blockedTime.endMinute),
+    );
+    if (blockingTime) {
+      window.alert(`Cannot schedule during blocked time: ${blockingTime.title}`);
+      return;
+    }
+
     setSelectedDayIndex(day);
     setShowWeekTasks(false);
     if (task.recurrence !== 'none') {
@@ -434,7 +494,7 @@ export default function App() {
       weekStart: weekKey,
       day,
       startMinute,
-      endMinute: Math.min(24 * 60, startMinute + task.duration),
+      endMinute,
       source,
     });
 
@@ -463,6 +523,14 @@ export default function App() {
     event.currentTarget.reset();
   }
 
+  function handleCreateBlockedTime(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const blockedTime = createBlockedTimeFromForm(new FormData(event.currentTarget));
+    if (blockedTime.endMinute <= blockedTime.startMinute) return;
+    addBlockedTime(blockedTime);
+    event.currentTarget.reset();
+  }
+
   function updateEventFromDates(eventId: string, start: Date | null, end: Date | null) {
     const current = scheduledEvents.find((event) => event.id === eventId);
     if (!current || !start) return;
@@ -473,6 +541,13 @@ export default function App() {
 
     const startMinute = snapToQuarterHour(minutesFromDate(start));
     const endMinute = end ? Math.max(startMinute + 15, snapToQuarterHour(minutesFromDate(end))) : current.endMinute;
+    const blockingTime = blockedTimes.find(
+      (blockedTime) => blockedTime.days.includes(day) && intervalsOverlap(startMinute, endMinute, blockedTime.startMinute, blockedTime.endMinute),
+    );
+    if (blockingTime) {
+      window.alert(`Cannot schedule during blocked time: ${blockingTime.title}`);
+      return;
+    }
 
     if (current.source === 'recurring') {
       const task = tasks.find((item) => item.id === current.taskId);
@@ -506,7 +581,7 @@ export default function App() {
   }
 
   function exportBackup() {
-    const data = JSON.stringify({projects, tasks, events}, null, 2);
+    const data = JSON.stringify({projects, tasks, events, blockedTimes, deletedTaskIds}, null, 2);
     const blob = new Blob([data], {type: 'application/json'});
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -541,8 +616,8 @@ export default function App() {
     const rect = event.active.rect.current.translated;
     if (!rect) return;
 
-    const dropX = rect.left + rect.width / 2;
-    const dropY = rect.top + rect.height / 2;
+    const dropX = rect.left + dragPointerOffsetRef.current.x;
+    const dropY = rect.top + dragPointerOffsetRef.current.y;
     const elements = document.elementsFromPoint(dropX, dropY);
     const dateElement = elements.find((element) => element.closest('[data-date]'))?.closest('[data-date]');
     const timeElement = elements.find((element) => element.closest('[data-time]'))?.closest('[data-time]');
@@ -561,8 +636,8 @@ export default function App() {
       return;
     }
 
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
+    const x = rect.left + dragPointerOffsetRef.current.x;
+    const y = rect.top + dragPointerOffsetRef.current.y;
     const elements = document.elementsFromPoint(x, y);
     const dateElement = elements.find((element) => element.closest('[data-date]'))?.closest('[data-date]');
     const timeElement = elements.find((element) => element.closest('[data-time]'))?.closest('[data-time]');
@@ -582,6 +657,20 @@ export default function App() {
     }
 
     setDropPreview({day, minute: snapToQuarterHour(minutesFromDate(date)), x, y});
+  }
+
+  function handleTaskDragStart(event: DragStartEvent) {
+    setActiveTaskId(String(event.active.id));
+    const rect = event.active.rect.current.initial;
+    if (!rect) {
+      dragPointerOffsetRef.current = {x: 0, y: 0};
+      return;
+    }
+    const pointer = getPointerCoordinates(event, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    dragPointerOffsetRef.current = {
+      x: Math.max(0, Math.min(rect.width, pointer.x - rect.left)),
+      y: Math.max(0, Math.min(rect.height, pointer.y - rect.top)),
+    };
   }
 
   function closeEventPopup() {
@@ -621,7 +710,7 @@ export default function App() {
       }}
       onDragEnd={handleTaskDragEnd}
       onDragMove={handleTaskDragMove}
-      onDragStart={(event) => setActiveTaskId(String(event.active.id))}
+      onDragStart={handleTaskDragStart}
     >
       <main className="planner-shell">
         <aside className="sidebar day-board">
@@ -634,8 +723,18 @@ export default function App() {
               </button>
             </div>
             <div className="view-switch" role="tablist" aria-label="View mode">
-              <button className={viewMode === 'calendar' ? 'active' : ''} onClick={() => setViewMode('calendar')} type="button">
-                Calendar
+              <button className={viewMode === 'week' ? 'active' : ''} onClick={() => setViewMode('week')} type="button">
+                Week
+              </button>
+              <button
+                className={viewMode === 'today' ? 'active' : ''}
+                onClick={() => {
+                  setWeekStart(new Date());
+                  setViewMode('today');
+                }}
+                type="button"
+              >
+                Today
               </button>
               <button className={viewMode === 'gantt' ? 'active' : ''} onClick={() => setViewMode('gantt')} type="button">
                 Gantt
@@ -647,6 +746,9 @@ export default function App() {
               </button>
               <button onClick={() => setModalMode('projects')} type="button">
                 Projects
+              </button>
+              <button onClick={() => setModalMode('blockedTimes')} type="button">
+                Blocked
               </button>
             </div>
           </section>
@@ -712,7 +814,7 @@ export default function App() {
           <header className="calendar-toolbar">
             <div>
               <p className="eyebrow">FullCalendar / dnd-kit / Zustand / PWA / {APP_VERSION}</p>
-              <h2>{viewMode === 'calendar' ? 'Weekly Calendar' : 'Gantt Chart'}</h2>
+              <h2>{viewMode === 'gantt' ? 'Gantt Chart' : viewMode === 'today' ? 'Today Calendar' : 'Weekly Calendar'}</h2>
             </div>
             <div className="toolbar-actions">
               <button type="button" onClick={() => moveWeek(-1)}>
@@ -769,7 +871,7 @@ export default function App() {
             )}
           </section>
 
-          {viewMode === 'calendar' ? (
+          {viewMode !== 'gantt' ? (
             <div className="calendar-frame">
               <FullCalendar
                 allDaySlot={false}
@@ -812,14 +914,14 @@ export default function App() {
                 eventLongPressDelay={160}
                 eventResize={(arg) => updateEventFromDates(arg.event.id, arg.event.start, arg.event.end)}
                 eventStartEditable
-                events={calendarEvents}
+                events={[...blockedCalendarEvents, ...calendarEvents]}
                 expandRows
                 firstDay={1}
                 headerToolbar={false}
                 height="100%"
-                initialDate={weekStart}
-                initialView="timeGridWeek"
-                key={weekStart.toISOString()}
+                initialDate={viewMode === 'today' ? new Date() : weekStart}
+                initialView={viewMode === 'today' ? 'timeGridDay' : 'timeGridWeek'}
+                key={`${viewMode}-${weekStart.toISOString()}`}
                 longPressDelay={160}
                 plugins={[timeGridPlugin, interactionPlugin]}
                 slotDuration="00:15:00"
@@ -1499,6 +1601,82 @@ export default function App() {
         </div>
       )}
 
+      {modalMode === 'blockedTimes' && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setModalMode(null)}>
+          <section
+            aria-label="Blocked times"
+            aria-modal="true"
+            className="event-modal app-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <header className="modal-header">
+              <div>
+                <p className="eyebrow">Blocked Times</p>
+                <h2>Schedule guard</h2>
+              </div>
+              <button aria-label="Close blocked times" className="icon-button" onClick={() => setModalMode(null)} type="button">
+                x
+              </button>
+            </header>
+
+            <form className="stack-form modal-form" onSubmit={handleCreateBlockedTime}>
+              <input name="title" placeholder="Blocked title" defaultValue="No task time" />
+              <fieldset className="day-checkboxes">
+                <legend>Days</legend>
+                {days.map((day, index) => (
+                  <label key={day}>
+                    <input name="blockedDays" type="checkbox" value={index} />
+                    {day}
+                  </label>
+                ))}
+              </fieldset>
+              <div className="field-grid">
+                <label>
+                  Start
+                  <select name="startMinute" defaultValue={12 * 60}>
+                    {Array.from({length: 24}, (_, hour) => (
+                      <option key={hour} value={hour * 60}>
+                        {formatTime(hour * 60)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  End
+                  <select name="endMinute" defaultValue={13 * 60}>
+                    {Array.from({length: 24}, (_, hour) => (
+                      <option key={hour} value={(hour + 1) * 60}>
+                        {formatTime(Math.min(24 * 60, (hour + 1) * 60))}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <button type="submit">Add Blocked Time</button>
+            </form>
+
+            <section className="blocked-list" aria-label="Blocked time list">
+              {blockedTimes.map((blockedTime) => (
+                <div className="blocked-item" key={blockedTime.id}>
+                  <div>
+                    <strong>{blockedTime.title}</strong>
+                    <span>
+                      {blockedTime.days.map((day) => days[day]).join(', ')} / {formatTime(blockedTime.startMinute)} -{' '}
+                      {formatTime(blockedTime.endMinute)}
+                    </span>
+                  </div>
+                  <button className="danger" onClick={() => deleteBlockedTime(blockedTime.id)} type="button">
+                    Delete
+                  </button>
+                </div>
+              ))}
+              {blockedTimes.length === 0 && <p className="empty-state">No blocked times</p>}
+            </section>
+          </section>
+        </div>
+      )}
+
       {selectedEvent && selectedEventTask && (
         <div className="modal-backdrop" role="presentation" onMouseDown={closeEventPopup}>
           <section
@@ -1543,6 +1721,7 @@ export default function App() {
               <label>
                 Description
                 <textarea
+                  className="event-description-textarea"
                   rows={4}
                   value={selectedEventTask.description}
                   onChange={(event) => updateTask({...selectedEventTask, description: event.target.value})}

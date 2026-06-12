@@ -41,10 +41,19 @@ export type CalendarEvent = {
   source: EventSource;
 };
 
+export type BlockedTime = {
+  id: string;
+  title: string;
+  days: number[];
+  startMinute: number;
+  endMinute: number;
+};
+
 export type PlannerData = {
   projects: Project[];
   tasks: Task[];
   events: CalendarEvent[];
+  blockedTimes: BlockedTime[];
   deletedTaskIds: string[];
 };
 
@@ -58,6 +67,8 @@ type PlannerStore = PlannerData & {
   addEvent: (event: CalendarEvent) => void;
   updateEvent: (event: CalendarEvent) => void;
   deleteEvent: (eventId: string) => void;
+  addBlockedTime: (blockedTime: BlockedTime) => void;
+  deleteBlockedTime: (blockedTimeId: string) => void;
   clearSchedule: () => void;
   replaceData: (data: PlannerData) => void;
 };
@@ -139,6 +150,7 @@ const initialData: PlannerData = {
     },
   ],
   events: [],
+  blockedTimes: [],
   deletedTaskIds: [],
 };
 
@@ -205,6 +217,13 @@ function normalizeData(raw: Partial<PlannerData>): PlannerData {
   return {
     projects,
     tasks,
+    blockedTimes: (raw.blockedTimes ?? []).map((blockedTime) => ({
+      id: blockedTime.id ?? crypto.randomUUID(),
+      title: blockedTime.title ?? 'Blocked',
+      days: (blockedTime.days ?? []).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day < days.length),
+      startMinute: Number(blockedTime.startMinute) || 0,
+      endMinute: Math.max(Number(blockedTime.startMinute) || 0, Number(blockedTime.endMinute) || 0),
+    })),
     deletedTaskIds,
     events: (raw.events ?? [])
       .map((event) => ({
@@ -311,6 +330,9 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
   updateEvent: (event) =>
     set((state) => withPersist(state, {events: state.events.map((item) => (item.id === event.id ? event : item))})),
   deleteEvent: (eventId) => set((state) => withPersist(state, {events: state.events.filter((event) => event.id !== eventId)})),
+  addBlockedTime: (blockedTime) => set((state) => withPersist(state, {blockedTimes: [...state.blockedTimes, blockedTime]})),
+  deleteBlockedTime: (blockedTimeId) =>
+    set((state) => withPersist(state, {blockedTimes: state.blockedTimes.filter((blockedTime) => blockedTime.id !== blockedTimeId)})),
   clearSchedule: () =>
     set((state) =>
       withPersist(state, {
@@ -342,8 +364,8 @@ export const usePlannerStore = create<PlannerStore>((set, get) => ({
 }));
 
 export function getStoreSnapshot() {
-  const {projects, tasks, events, deletedTaskIds} = getPlannerState();
-  return {projects, tasks, events, deletedTaskIds};
+  const {projects, tasks, events, blockedTimes, deletedTaskIds} = getPlannerState();
+  return {projects, tasks, events, blockedTimes, deletedTaskIds};
 }
 
 function getPlannerState() {
